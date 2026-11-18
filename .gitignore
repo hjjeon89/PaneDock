@@ -55,3 +55,17 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Visual Studio / local settings
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+settings.local.json
+
+# Published build output (build.cmd / build.ps1)
+/build/
+
+# Local verification output
+.artifacts/
