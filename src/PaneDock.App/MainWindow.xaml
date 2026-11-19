@@ -44,8 +44,8 @@
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                <Button Content="◐ Light / Dark" ToolTip="미리보기 테마 전환"
-                        Click="Theme_Click" Margin="0,0,10,0" VerticalAlignment="Center" Padding="12,4"/>
+                <Button x:Name="ThemeButton" Content="◐ Light" ToolTip="현재 Light · Dark로 변경"
+                         Click="Theme_Click" Margin="0,0,10,0" VerticalAlignment="Center" Padding="12,4"/>
                 <Button Style="{StaticResource WindowButton}" Content="&#xE921;"
                         AutomationProperties.Name="최소화" ToolTip="최소화" Click="Minimize_Click"/>
                 <Button Click="Maximize_Click">

@@ -243,6 +243,13 @@ try
     {
         Layout = PaneLayout.FourGrid,
         ActivePaneNumber = 3,
+        IsDarkTheme = true,
+        LayoutRatios = new Dictionary<PaneLayout, PaneSplitRatios>
+        {
+            [PaneLayout.TwoColumns] = new() { FirstColumn = 0.32 },
+            [PaneLayout.ThreeTop] = new() { FirstRow = 0.61, FirstColumn = 0.42 },
+            [PaneLayout.FourGrid] = new() { FirstColumn = 0.67, FirstRow = 0.38 }
+        },
         Panes =
         [
             new PaneSession
@@ -259,6 +266,12 @@ try
     Assert(restored is not null, "세션 JSON 다시 읽기 실패");
     Assert(restored!.Layout == PaneLayout.FourGrid && restored.ActivePaneNumber == 3,
         "패널 구성과 활성 패널 복원 실패");
+    Assert(restored.IsDarkTheme, "Dark 테마 저장/로드 실패");
+    Assert(restored.LayoutRatios.Count == 3 && Math.Abs(restored.LayoutRatios[PaneLayout.TwoColumns].FirstColumn - 0.32) < 1e-8,
+        "레이아웃별 분할 비율 JSON 왕복 저장 오류");
+    Assert(Math.Abs(restored.LayoutRatios[PaneLayout.ThreeTop].FirstRow - 0.61) < 1e-8
+        && Math.Abs(restored.LayoutRatios[PaneLayout.FourGrid].FirstRow - 0.38) < 1e-8,
+        "레이아웃별 가로/세로 독립 비율이 저장되지 않음");
     Assert(restored.Panes.Count == 4 && restored.Panes[0].TabPaths.Count == 2
         && restored.Panes[0].ActiveTabIndex == 1, "패널별 탭 경로/활성 탭 복원 실패");
     Assert(restored.Panes[0].TabPaths[1] == Path.GetFullPath(sessionRoot),
@@ -277,6 +290,28 @@ try
         "잘못된 활성 패널 또는 탭 인덱스 정규화 실패");
     Assert(invalid.Panes[0].TabPaths.All(ExplorerLocations.IsThisPc),
         "상대 경로 또는 빈 경로는 내 PC로 복원되어야 함");
+
+    var sanitized = WorkspaceSessionStore.Normalize(new WorkspaceSession
+    {
+        LayoutRatios = new Dictionary<PaneLayout, PaneSplitRatios>
+        {
+            [PaneLayout.TwoColumns] = new() { FirstColumn = 0.02, FirstRow = 0.99 },
+            [PaneLayout.FourGrid] = new() { FirstColumn = double.NaN, FirstRow = double.PositiveInfinity },
+            [(PaneLayout)999] = new() { FirstColumn = 0.7 }
+        }
+    });
+    Assert(sanitized.LayoutRatios.Count == 2, "지원하지 않는 레이아웃을 보존함");
+    Assert(sanitized.LayoutRatios[PaneLayout.TwoColumns].FirstColumn == 0.1
+        && sanitized.LayoutRatios[PaneLayout.TwoColumns].FirstRow == 0.9,
+        "과도한 분할 비율 제한 실패");
+    Assert(sanitized.LayoutRatios[PaneLayout.FourGrid].FirstColumn == 0.5
+        && sanitized.LayoutRatios[PaneLayout.FourGrid].FirstRow == 0.5,
+        "비정상 NaN/Infinity 분할 비율 처리 실패");
+
+    File.WriteAllText(sessionFile, "{\"Version\":1,\"Layout\":\"TwoColumns\",\"ActivePaneNumber\":1}");
+    var legacy = store.Load();
+    Assert(legacy is { IsDarkTheme: false } && legacy.LayoutRatios.Count == 0
+        && legacy.Panes.Count == 4, "기존 Version 1 저장 파일 호환성 문제");
 
     File.WriteAllText(sessionFile, "{invalid json");
     Assert(store.Load() is null, "손상된 JSON에서 안전하게 기본 화면으로 복구하지 못함");

@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using PaneDock.App.Controls;
@@ -14,6 +15,9 @@ public partial class MainWindow : Window
     private readonly ExplorerPane[] _panes;
     private readonly WorkspaceSessionStore _sessionStore = new();
     private readonly DispatcherTimer _sessionSaveTimer;
+    private readonly Dictionary<PaneLayout, PaneSplitRatios> _layoutRatios = [];
+    private Grid? _columnSplitGrid;
+    private Grid? _rowSplitGrid;
     private PaneLayout _layout = PaneLayout.TwoColumns;
     private bool _lightTheme = true;
     private bool _initializing = true;
@@ -23,6 +27,15 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         var session = _sessionStore.Load();
+        if (session is not null)
+        {
+            foreach (var (layout, ratio) in session.LayoutRatios)
+                _layoutRatios[layout] = new PaneSplitRatios
+                {
+                    FirstColumn = ratio.FirstColumn,
+                    FirstRow = ratio.FirstRow
+                };
+        }
         _sessionSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
         _sessionSaveTimer.Tick += (_, _) =>
         {
@@ -30,6 +43,7 @@ public partial class MainWindow : Window
             SaveSession();
         };
 
+        ApplyTheme(session?.IsDarkTheme == true);
         _panes = Enumerable.Range(1, 4)
             .Select(i => new ExplorerPane(i, session?.Panes.ElementAtOrDefault(i - 1))).ToArray();
         foreach (var pane in _panes)
@@ -89,7 +103,10 @@ public partial class MainWindow : Window
 
     private void ApplyLayout(PaneLayout layout)
     {
+        CaptureCurrentLayoutRatios();
         _layout = layout;
+        _columnSplitGrid = null;
+        _rowSplitGrid = null;
         // WPF 컨트롤의 논리적 부모는 하나만 허용된다.
         // 레이아웃 변경 시 뷰를 보존한 채 부모 컨테이너만 재배치한다.
         RemovePaneParents(PaneHost);
@@ -153,10 +170,18 @@ public partial class MainWindow : Window
             return;
         try
         {
+            CaptureCurrentLayoutRatios();
             _sessionStore.Save(new WorkspaceSession
             {
                 Layout = _layout,
                 ActivePaneNumber = _activePane?.Number ?? 1,
+                IsDarkTheme = !_lightTheme,
+                LayoutRatios = _layoutRatios.ToDictionary(
+                    pair => pair.Key, pair => new PaneSplitRatios
+                    {
+                        FirstColumn = pair.Value.FirstColumn,
+                        FirstRow = pair.Value.FirstRow
+                    }),
                 Panes = _panes.Select(pane => pane.CaptureSession()).ToList()
             });
         }
@@ -167,46 +192,99 @@ public partial class MainWindow : Window
         }
     }
 
-    private static Grid NewGrid(int rows, int columns)
+    private void CaptureCurrentLayoutRatios()
     {
+        if (_columnSplitGrid is null && _rowSplitGrid is null)
+            return;
+
+        if (!_layoutRatios.TryGetValue(_layout, out var ratios))
+        {
+            ratios = new PaneSplitRatios();
+            _layoutRatios[_layout] = ratios;
+        }
+
+        if (_columnSplitGrid is { ColumnDefinitions.Count: >= 3 } columns)
+        {
+            var first = columns.ColumnDefinitions[0].ActualWidth;
+            var second = columns.ColumnDefinitions[2].ActualWidth;
+            if (first + second > 1)
+                ratios.FirstColumn = Math.Clamp(first / (first + second), 0.1, 0.9);
+        }
+
+        if (_rowSplitGrid is { RowDefinitions.Count: >= 3 } rows)
+        {
+            var first = rows.RowDefinitions[0].ActualHeight;
+            var second = rows.RowDefinitions[2].ActualHeight;
+            if (first + second > 1)
+                ratios.FirstRow = Math.Clamp(first / (first + second), 0.1, 0.9);
+        }
+    }
+
+    private Grid NewGrid(int rows, int columns)
+    {
+        _layoutRatios.TryGetValue(_layout, out var saved);
+        var columnRatio = saved?.FirstColumn ?? 0.5;
+        var rowRatio = saved?.FirstRow ?? 0.5;
         var grid = new Grid();
         for (var r = 0; r < rows * 2 - 1; r++)
             grid.RowDefinitions.Add(new RowDefinition
             {
-                Height = r % 2 == 1 ? new GridLength(6) : new GridLength(1, GridUnitType.Star)
+                Height = r % 2 == 1 ? new GridLength(6)
+                    : new GridLength(r == 0 ? rowRatio : 1 - rowRatio, GridUnitType.Star)
             });
         for (var c = 0; c < columns * 2 - 1; c++)
             grid.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = c % 2 == 1 ? new GridLength(6) : new GridLength(1, GridUnitType.Star)
+                Width = c % 2 == 1 ? new GridLength(6)
+                    : new GridLength(c == 0 ? columnRatio : 1 - columnRatio, GridUnitType.Star)
             });
         if (rows == 2)
         {
-            grid.Children.Add(new GridSplitter
+            _rowSplitGrid = grid;
+            var splitter = new GridSplitter
             {
                 Height = 6,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Center,
                 Background = Brushes.Transparent,
                 ResizeDirection = GridResizeDirection.Rows
-            });
+            };
+            splitter.DragCompleted += (_, _) => SplitterDragCompleted();
+            splitter.KeyUp += SplitterKeyUp;
+            grid.Children.Add(splitter);
             Grid.SetRow(grid.Children[^1], 1);
             Grid.SetColumnSpan(grid.Children[^1], columns * 2 - 1);
         }
         if (columns == 2)
         {
-            grid.Children.Add(new GridSplitter
+            _columnSplitGrid = grid;
+            var splitter = new GridSplitter
             {
                 Width = 6,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Stretch,
                 Background = Brushes.Transparent,
                 ResizeDirection = GridResizeDirection.Columns
-            });
+            };
+            splitter.DragCompleted += (_, _) => SplitterDragCompleted();
+            splitter.KeyUp += SplitterKeyUp;
+            grid.Children.Add(splitter);
             Grid.SetColumn(grid.Children[^1], 1);
             Grid.SetRowSpan(grid.Children[^1], rows * 2 - 1);
         }
         return grid;
+    }
+
+    private void SplitterDragCompleted()
+    {
+        CaptureCurrentLayoutRatios();
+        ScheduleSessionSave();
+    }
+
+    private void SplitterKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+            SplitterDragCompleted();
     }
 
     private static void Place(Grid grid, UIElement child, int row, int column)
@@ -216,7 +294,7 @@ public partial class MainWindow : Window
         Grid.SetColumn(child, column);
     }
 
-    private static void BuildCells(Grid host, int rows, int columns, params ExplorerPane[] panes)
+    private void BuildCells(Grid host, int rows, int columns, params ExplorerPane[] panes)
     {
         var layout = NewGrid(rows, columns);
         host.Children.Add(layout);
@@ -239,8 +317,15 @@ public partial class MainWindow : Window
     }
 
     private void Theme_Click(object sender, RoutedEventArgs e)
+        => ApplyTheme(_lightTheme);
+
+    private void ApplyTheme(bool isDark)
     {
-        _lightTheme = !_lightTheme;
+        _lightTheme = !isDark;
+        ThemeButton.Content = _lightTheme ? "◐ Light" : "◐ Dark";
+        ThemeButton.ToolTip = _lightTheme
+            ? "현재 Light · 클릭하면 Dark로 변경"
+            : "현재 Dark · 클릭하면 Light로 변경";
         var resources = Application.Current.Resources;
         void Set(string key, string hex) =>
             resources[key] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
@@ -270,5 +355,6 @@ public partial class MainWindow : Window
 
         if (_activePane is not null)
             SetActivePane(_activePane);
+        ScheduleSessionSave();
     }
 }

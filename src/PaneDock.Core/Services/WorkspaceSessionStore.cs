@@ -79,8 +79,21 @@ public sealed class WorkspaceSessionStore
         {
             Layout = Enum.IsDefined(session.Layout) ? session.Layout : PaneLayout.TwoColumns,
             ActivePaneNumber = session.ActivePaneNumber is >= 1 and <= 4
-                ? session.ActivePaneNumber : 1
+                ? session.ActivePaneNumber : 1,
+            IsDarkTheme = session.IsDarkTheme
         };
+
+        foreach (var (layout, ratios) in session.LayoutRatios ?? [])
+        {
+            if (!Enum.IsDefined(layout) || ratios is null)
+                continue;
+
+            result.LayoutRatios[layout] = new PaneSplitRatios
+            {
+                FirstColumn = SafeRatio(ratios.FirstColumn),
+                FirstRow = SafeRatio(ratios.FirstRow)
+            };
+        }
 
         foreach (var pane in (session.Panes ?? []).Take(4))
         {
@@ -104,6 +117,9 @@ public sealed class WorkspaceSessionStore
 
         return result;
     }
+
+    private static double SafeRatio(double value) =>
+        double.IsFinite(value) ? Math.Clamp(value, 0.1, 0.9) : 0.5;
 
     private static string SafePath(string? path)
     {
