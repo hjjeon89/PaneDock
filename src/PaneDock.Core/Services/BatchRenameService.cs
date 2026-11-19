@@ -31,6 +31,13 @@ public sealed class BatchRenameService
                 items.Add(new RenamePreviewItem(full, full, "파일이 없거나 폴더입니다."));
                 continue;
             }
+            RenameSourceSnapshot snapshot;
+            try { snapshot = ReadSnapshot(full); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                items.Add(new RenamePreviewItem(full, full, "원본 파일 정보를 확인할 수 없습니다."));
+                continue;
+            }
 
             var sourceName = Path.GetFileName(full);
             var stem = Path.GetFileNameWithoutExtension(sourceName);
@@ -49,7 +56,7 @@ public sealed class BatchRenameService
             }
 
             var target = Path.Combine(Path.GetDirectoryName(full)!, newName);
-            items.Add(new RenamePreviewItem(full, target));
+            items.Add(new RenamePreviewItem(full, target) { SourceSnapshot = snapshot });
         }
 
         return ValidateTargets(items);
@@ -61,7 +68,27 @@ public sealed class BatchRenameService
 
     public static BatchRenamePlan CreateUndoPlan(BatchRenamePlan completed) =>
         new(completed.Items.Where(item => item.Changed && item.Error is null)
-            .Select(item => new RenamePreviewItem(item.TargetPath, item.SourcePath)).ToArray());
+            .Select(item => new RenamePreviewItem(item.TargetPath, item.SourcePath)
+            {
+                SourceSnapshot = item.SourceSnapshot
+            }).ToArray());
+
+    private static RenameSourceSnapshot ReadSnapshot(string path)
+    {
+        var file = new FileInfo(path);
+        return new RenameSourceSnapshot(file.Length, file.LastWriteTimeUtc, file.CreationTimeUtc);
+    }
+
+    private static bool SourceStillMatches(RenamePreviewItem item, string path)
+    {
+        if (item.SourceSnapshot is not { } expected)
+            return false;
+        try { return File.Exists(path) && ReadSnapshot(path) == expected; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     private static BatchRenamePlan ValidateTargets(IReadOnlyList<RenamePreviewItem> input)
     {
@@ -101,13 +128,13 @@ public sealed class BatchRenameService
         var changed = plan.Items.Where(item => item.Changed).ToArray();
         var sources = changed.Select(item => item.SourcePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (changed.Any(item => !File.Exists(item.SourcePath)
+        if (changed.Any(item => !SourceStillMatches(item, item.SourcePath)
             || !Path.IsPathFullyQualified(item.SourcePath)
             || !Path.IsPathFullyQualified(item.TargetPath)
             || !string.Equals(Path.GetDirectoryName(item.SourcePath),
                 Path.GetDirectoryName(item.TargetPath), StringComparison.OrdinalIgnoreCase)
             || !WindowsItemName.IsValid(Path.GetFileName(item.TargetPath))))
-            return BatchRenameExecution.Rejected("파일이 사라졌거나 허용되지 않는 변경 대상입니다.");
+            return BatchRenameExecution.Rejected("미리보기 이후 원본이 변경·교체·삭제되었거나 변경 대상이 잘못되었습니다. 다시 미리보기하세요.");
         if (changed.Select(item => item.TargetPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count() != changed.Length)
             return BatchRenameExecution.Rejected("변경 대상 이름이 중복됩니다.");
@@ -122,13 +149,17 @@ public sealed class BatchRenameService
             foreach (var item in changed)
             {
                 token.ThrowIfCancellationRequested();
+                if (!SourceStillMatches(item, item.SourcePath))
+                    throw new IOException("작업 중 원본 파일이 변경되었습니다.");
                 var temp = NewTemporaryPath(item.SourcePath);
                 File.Move(item.SourcePath, temp);
-                stages.Add(new StagedRename(item.SourcePath, item.TargetPath, temp));
+                stages.Add(new StagedRename(item.SourcePath, item.TargetPath, temp, item));
             }
             foreach (var stage in stages)
             {
                 token.ThrowIfCancellationRequested();
+                if (!SourceStillMatches(stage.PreviewItem, stage.CurrentPath))
+                    throw new IOException("임시 이동 중 파일 정보가 변경되었습니다.");
                 File.Move(stage.CurrentPath, stage.TargetPath);
                 stage.CurrentPath = stage.TargetPath;
                 done++;
@@ -196,10 +227,12 @@ public sealed class BatchRenameService
         throw new IOException("임시 작업 파일명을 확보하지 못했습니다.");
     }
 
-    private sealed class StagedRename(string source, string target, string current)
+    private sealed class StagedRename(string source, string target, string current,
+        RenamePreviewItem previewItem)
     {
         public string SourcePath { get; } = source;
         public string TargetPath { get; } = target;
         public string CurrentPath { get; set; } = current;
+        public RenamePreviewItem PreviewItem { get; } = previewItem;
     }
 }

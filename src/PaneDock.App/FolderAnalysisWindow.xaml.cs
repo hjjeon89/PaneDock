@@ -28,6 +28,7 @@ public partial class FolderAnalysisWindow : Window
 
     private void AddFolder(string path)
     {
+        if (_cancellation is not null) return;
         if (string.IsNullOrWhiteSpace(path)) return;
         string normalized;
         try { normalized = Path.GetFullPath(path.Trim()); }
@@ -79,12 +80,15 @@ public partial class FolderAnalysisWindow : Window
 
         using var cancel = new CancellationTokenSource();
         _cancellation = cancel;
+        var finished = false;
         StartButton.IsEnabled = false;
         CancelButton.IsEnabled = true;
+        FolderPathBox.IsEnabled = false;
+        FoldersBox.IsEnabled = false;
         _results.Clear();
         var progress = new Progress<FolderAnalysisProgress>(update =>
         {
-            if (_closing) return;
+            if (_closing || finished) return;
             if (update.CompletedRoot is { } root)
             {
                 _results.Add(root);
@@ -97,6 +101,7 @@ public partial class FolderAnalysisWindow : Window
         {
             var report = await _service.AnalyzeAsync(_folders, progress, cancel.Token);
             if (_closing) return;
+            finished = true;
             _results.Clear();
             foreach (var result in report.Roots)
                 _results.Add(result);
@@ -116,10 +121,13 @@ public partial class FolderAnalysisWindow : Window
         }
         finally
         {
+            finished = true;
             if (!_closing)
             {
                 StartButton.IsEnabled = true;
                 CancelButton.IsEnabled = false;
+                FolderPathBox.IsEnabled = true;
+                FoldersBox.IsEnabled = true;
             }
             if (ReferenceEquals(_cancellation, cancel)) _cancellation = null;
         }

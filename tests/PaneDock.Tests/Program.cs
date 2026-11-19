@@ -1,9 +1,16 @@
 ﻿using PaneDock.Core.Models;
 using PaneDock.Core.Services;
 using PaneDock.App;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
+[TestClass]
+public sealed class SmokeTests
+{
+    [TestMethod]
+    public async Task AllExistingSmokeChecks()
+    {
 var checks = 0;
 var expectedCounts = new Dictionary<PaneLayout, int>
 {
@@ -585,6 +592,8 @@ finally
 }
 
 Console.WriteLine($"PaneDock 검증 통과 ({checks}개 확인; Windows Shell 조작은 임시 폴더만 사용)");
+    }
+}
 
 sealed class ImmediateProgress<T>(Action<T> callback) : IProgress<T>
 {

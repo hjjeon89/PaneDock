@@ -17,6 +17,7 @@ public partial class BatchRenameWindow : Window
     private BatchRenamePlan? _lastCompleted;
     private CancellationTokenSource? _cancellation;
     private bool _closing;
+    private int _previewGeneration;
 
     public event Action<string[]>? FilesChanged;
 
@@ -26,7 +27,18 @@ public partial class BatchRenameWindow : Window
         _currentFolder = currentFolder;
         FilesList.ItemsSource = _files;
         AddFiles(selectedFiles);
-        Closing += (_, _) => { _closing = true; _cancellation?.Cancel(); };
+        Closing += (_, e) =>
+        {
+            if (_cancellation is not null)
+            {
+                // Do not discard rollback diagnostics while files are being renamed.
+                e.Cancel = true;
+                _cancellation.Cancel();
+                StatusText.Text = "변경 중단 및 원본 복구가 끝난 뒤 창을 닫을 수 있습니다.";
+                return;
+            }
+            _closing = true;
+        };
     }
 
     private void AddFiles(IEnumerable<string> filenames)
@@ -105,6 +117,7 @@ public partial class BatchRenameWindow : Window
 
     private void InvalidatePreview()
     {
+        _previewGeneration++;
         _preview = null;
         if (ApplyButton is not null) ApplyButton.IsEnabled = false;
         if (PreviewGrid is not null) PreviewGrid.ItemsSource = null;
@@ -114,19 +127,43 @@ public partial class BatchRenameWindow : Window
         FindBox.Text, ReplaceBox.Text, PrefixBox.Text, SuffixBox.Text,
         ChangeExtensionBox.IsChecked == true, ExtensionBox.Text);
 
-    private void Preview_Click(object sender, RoutedEventArgs e)
+    private async void Preview_Click(object sender, RoutedEventArgs e)
     {
+        if (_cancellation is not null) return;
         if (_files.Count == 0)
         {
             StatusText.Text = "변경할 파일을 먼저 선택하세요.";
             return;
         }
-        _preview = _service.BuildPreview(_files, GetOptions());
-        PreviewGrid.ItemsSource = _preview.Items;
-        ApplyButton.IsEnabled = _preview.CanExecute;
-        StatusText.Text = $"대상 {_preview.Items.Count:N0}개 · 변경 예정 {_preview.ChangeCount:N0}개 · "
-            + $"충돌/오류 {_preview.ErrorCount:N0}개"
-            + (_preview.ErrorCount > 0 ? " · 오류를 수정하고 다시 미리보기하세요." : "");
+        // Path and metadata checks for thousands of files, especially on a
+        // network drive, must not block WPF's UI thread.
+        InvalidatePreview();
+        var generation = _previewGeneration;
+        var files = _files.ToArray();
+        var options = GetOptions();
+        PreviewButton.IsEnabled = false;
+        StatusText.Text = $"{files.Length:N0}개 파일 미리보기 계산 중…";
+        try
+        {
+            var plan = await Task.Run(() => _service.BuildPreview(files, options));
+            if (_closing || generation != _previewGeneration) return;
+            _preview = plan;
+            PreviewGrid.ItemsSource = plan.Items;
+            ApplyButton.IsEnabled = plan.CanExecute;
+            StatusText.Text = $"대상 {plan.Items.Count:N0}개 · 변경 예정 {plan.ChangeCount:N0}개 · "
+                + $"충돌/오류 {plan.ErrorCount:N0}개"
+                + (plan.ErrorCount > 0 ? " · 오류를 수정하고 다시 미리보기하세요." : "");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or ArgumentException or NotSupportedException)
+        {
+            if (!_closing && generation == _previewGeneration)
+                StatusText.Text = "미리보기를 생성할 수 없습니다: " + ex.Message;
+        }
+        finally
+        {
+            if (!_closing) PreviewButton.IsEnabled = true;
+        }
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)
@@ -211,6 +248,12 @@ public partial class BatchRenameWindow : Window
         ApplyButton.IsEnabled = !busy && _preview?.CanExecute == true;
         UndoButton.IsEnabled = !busy && _lastCompleted is not null;
         FilesList.IsEnabled = !busy;
+        FindBox.IsEnabled = !busy;
+        ReplaceBox.IsEnabled = !busy;
+        PrefixBox.IsEnabled = !busy;
+        SuffixBox.IsEnabled = !busy;
+        ChangeExtensionBox.IsEnabled = !busy;
+        ExtensionBox.IsEnabled = !busy && ChangeExtensionBox.IsChecked == true;
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _cancellation?.Cancel();

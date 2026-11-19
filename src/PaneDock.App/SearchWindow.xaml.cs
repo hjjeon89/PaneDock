@@ -63,6 +63,7 @@ public partial class SearchWindow : Window
         }
 
         var generation = ++_searchGeneration;
+        var finished = false;
         using var cancel = new CancellationTokenSource();
         _cancellation = cancel;
         _results.Clear();
@@ -73,7 +74,7 @@ public partial class SearchWindow : Window
         StatusText.Text = "파일 검색 중…";
         var progress = new Progress<FileSearchProgress>(batch =>
         {
-            if (_closing || _searchGeneration != generation) return;
+            if (_closing || finished || _searchGeneration != generation) return;
             foreach (var item in batch.NewItems)
                 _results.Add(item);
             StatusText.Text = $"{_results.Count:N0}개 발견 · {batch.DirectoriesScanned:N0}개 폴더 검색 중"
@@ -84,9 +85,18 @@ public partial class SearchWindow : Window
             var report = await _service.SearchAsync(root, query,
                 RecursiveBox.IsChecked == true, progress, cancel.Token);
             if (!_closing && _searchGeneration == generation)
+            {
+                finished = true;
+                // Progress<T> callbacks are posted asynchronously. Reconcile
+                // from the authoritative result so late callbacks cannot leave
+                // a partial list or overwrite the completion status.
+                _results.Clear();
+                foreach (var item in report.Results)
+                    _results.Add(item);
                 StatusText.Text = $"{report.Matched:N0}개 검색됨 · {report.DirectoriesScanned:N0}개 폴더 확인"
                     + (report.SkippedFolders > 0 ? $" · 접근 불가 {report.SkippedFolders:N0}개" : "")
                     + (report.LimitReached ? " · 최대 5,000개 결과 제한" : "");
+            }
         }
         catch (OperationCanceledException)
         {
@@ -100,6 +110,7 @@ public partial class SearchWindow : Window
         }
         finally
         {
+            finished = true;
             if (_searchGeneration == generation && !_closing)
             {
                 SearchButton.IsEnabled = true;

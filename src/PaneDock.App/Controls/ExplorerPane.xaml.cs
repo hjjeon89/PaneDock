@@ -34,7 +34,7 @@ public partial class ExplorerPane : UserControl
     public IReadOnlyList<string> GetFoldersForAnalysis()
     {
         var selected = Files.SelectedItems.OfType<ExplorerEntry>()
-            .Where(item => item.IsDirectory && !item.IsDrive)
+            .Where(item => item.IsDirectory)
             .Select(item => item.FullPath).ToArray();
         if (selected.Length > 0)
             return selected;

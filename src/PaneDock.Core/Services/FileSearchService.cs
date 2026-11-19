@@ -35,6 +35,7 @@ public sealed class FileSearchService
         var skipped = 0;
         var limitReached = false;
         var batch = new List<FileSearchResult>(128);
+        var allResults = new List<FileSearchResult>(Math.Min(limit, 5000));
 
         void Flush()
         {
@@ -77,8 +78,10 @@ public sealed class FileSearchService
                     catch (IOException) { modified = DateTime.MinValue; }
                     catch (UnauthorizedAccessException) { modified = DateTime.MinValue; }
 
-                    batch.Add(new FileSearchResult(entry.Name, entry.FullName, current,
-                        isDirectory, size, modified));
+                    var item = new FileSearchResult(entry.Name, entry.FullName, current,
+                        isDirectory, size, modified);
+                    batch.Add(item);
+                    allResults.Add(item);
                     matches++;
                     if (batch.Count >= 128) Flush();
                     if (matches >= limit)
@@ -96,6 +99,6 @@ public sealed class FileSearchService
 
         Flush();
         progress?.Report(new FileSearchProgress([], matches, scanned, skipped, limitReached));
-        return new FileSearchSummary(matches, scanned, skipped, limitReached);
+        return new FileSearchSummary(matches, scanned, skipped, limitReached, allResults);
     }
 }

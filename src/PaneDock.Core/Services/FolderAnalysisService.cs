@@ -1,4 +1,5 @@
 ﻿using PaneDock.Core.Models;
+using System.Diagnostics;
 
 namespace PaneDock.Core.Services;
 
@@ -64,6 +65,7 @@ public sealed class FolderAnalysisService
 
             var stack = new Stack<string>();
             stack.Push(root);
+            var lastProgress = Stopwatch.GetTimestamp();
             while (stack.Count > 0)
             {
                 token.ThrowIfCancellationRequested();
@@ -95,8 +97,12 @@ public sealed class FolderAnalysisService
                             catch (IOException) { skipped++; }
                             catch (UnauthorizedAccessException) { skipped++; }
                         }
-                        if ((files + folders) % 128 == 0)
+                        if ((files + folders) % 128 == 0
+                            && Stopwatch.GetElapsedTime(lastProgress) >= TimeSpan.FromMilliseconds(120))
+                        {
                             progress?.Report(new FolderAnalysisProgress(current, files, folders, bytes));
+                            lastProgress = Stopwatch.GetTimestamp();
+                        }
                     }
                 }
                 catch (IOException) { skipped++; }
