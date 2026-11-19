@@ -28,6 +28,7 @@ public partial class ExplorerPane : UserControl
 
     public event EventHandler? Activated;
     public event EventHandler? SessionChanged;
+    public event Action<ExplorerPane, int>? MoveTabRequested;
 
     public int Number { get; }
 
@@ -48,11 +49,11 @@ public partial class ExplorerPane : UserControl
         };
         if (saved?.TabPaths is { Count: > 0 } paths)
         {
-            foreach (var path in paths)
-                AddTab(path, restoreFallback: true);
+            for (var i = 0; i < paths.Count; i++)
+                AddTab(paths[i], restoreFallback: true, saved?.TabStates?.ElementAtOrDefault(i));
 
             _changingTab = true;
-            Tabs.SelectedIndex = Math.Clamp(saved.ActiveTabIndex, 0, _tabs.Count - 1);
+            Tabs.SelectedIndex = Math.Clamp(saved?.ActiveTabIndex ?? 0, 0, _tabs.Count - 1);
             _changingTab = false;
             if (SelectedTab is { } selected)
                 ShowTab(selected);
@@ -67,7 +68,37 @@ public partial class ExplorerPane : UserControl
     {
         TabPaths = _tabs.Select(tab => string.IsNullOrWhiteSpace(tab.Path)
             ? tab.RequestedPath : tab.Path).ToList(),
-        ActiveTabIndex = Math.Max(0, Tabs.SelectedIndex)
+        ActiveTabIndex = Math.Max(0, Tabs.SelectedIndex),
+        TabStates = _tabs.Select(CaptureTabState).ToList()
+    };
+
+    public void ReceiveTab(string path, TabViewState state) =>
+        AddTab(path, restoreFallback: true, state);
+
+    public (string Path, TabViewState State)? GetActiveTabTransfer()
+    {
+        if (SelectedTab is not { } tab)
+            return null;
+        return (string.IsNullOrEmpty(tab.Path) ? tab.RequestedPath : tab.Path, CaptureTabState(tab));
+    }
+
+    public void FinishTabMove()
+    {
+        if (SelectedTab is not { } tab)
+            return;
+        if (_tabs.Count > 1)
+            CloseTab(tab);
+        else
+            _ = NavigateAsync(tab, ExplorerLocations.ThisPc, addHistory: true);
+    }
+
+    private static TabViewState CaptureTabState(ExplorerTab tab) => new()
+    {
+        FilterText = tab.FilterText,
+        FilterVisible = tab.FilterVisible,
+        ShowHidden = tab.ShowHidden,
+        SortColumn = tab.SortColumn,
+        SortDescending = tab.SortDescending
     };
 
     public void SetActive(bool active)
@@ -80,9 +111,18 @@ public partial class ExplorerPane : UserControl
 
     private ExplorerTab? SelectedTab => (Tabs.SelectedItem as TabItem)?.Tag as ExplorerTab;
 
-    private void AddTab(string path, bool restoreFallback = false)
+    private void AddTab(string path, bool restoreFallback = false, TabViewState? state = null)
     {
         var tab = new ExplorerTab { RequestedPath = path };
+        if (state is not null)
+        {
+            tab.FilterText = state.FilterText;
+            tab.FilterVisible = state.FilterVisible;
+            tab.ShowHidden = state.ShowHidden;
+            tab.SortColumn = state.SortColumn;
+            tab.SortDescending = state.SortDescending;
+            ApplyTabSort(tab);
+        }
         _tabs.Add(tab);
         var label = new TextBlock { Text = $"탭 {++_tabCounter}", VerticalAlignment = VerticalAlignment.Center };
         var close = new Button
@@ -104,7 +144,29 @@ public partial class ExplorerPane : UserControl
         header.Children.Add(close);
         tab.HeaderLabel = label;
         _changingTab = true;
-        Tabs.Items.Add(new TabItem { Header = header, Tag = tab });
+        var tabItem = new TabItem { Header = header, Tag = tab };
+        var context = new ContextMenu();
+        var duplicate = new MenuItem { Header = "탭 복제" };
+        duplicate.Click += (_, _) =>
+            AddTab(string.IsNullOrEmpty(tab.Path) ? tab.RequestedPath : tab.Path,
+                restoreFallback: true, CaptureTabState(tab));
+        context.Items.Add(duplicate);
+        var sendTo = new MenuItem { Header = "다른 패널로 이동" };
+        for (var i = 1; i <= 4; i++)
+        {
+            if (i == Number) continue;
+            var target = i;
+            var to = new MenuItem { Header = $"PANE {target}" };
+            to.Click += (_, _) =>
+            {
+                Tabs.SelectedItem = tabItem;
+                MoveTabRequested?.Invoke(this, target);
+            };
+            sendTo.Items.Add(to);
+        }
+        context.Items.Add(sendTo);
+        tabItem.ContextMenu = context;
+        Tabs.Items.Add(tabItem);
         Tabs.SelectedIndex = _tabs.Count - 1;
         _changingTab = false;
         ShowTab(tab);
@@ -193,12 +255,13 @@ public partial class ExplorerPane : UserControl
 
         ConfigureWatcher(tab, fullPath);
         tab.IsCheckingPath = false;
-        if (!SamePath(tab.Path, fullPath))
+        if (!string.IsNullOrEmpty(tab.Path) && !SamePath(tab.Path, fullPath))
         {
             // The filename filter applies to the folder in which it was typed;
             // navigating to Desktop/another folder should show its contents.
             tab.FilterText = "";
             tab.View.Refresh();
+            SessionChanged?.Invoke(this, EventArgs.Empty);
         }
         tab.Items.Clear();
         tab.SelectedEntries.Clear();
@@ -286,6 +349,10 @@ public partial class ExplorerPane : UserControl
         ShowHidden.IsChecked = tab.ShowHidden;
         SetFilterVisible(tab.FilterVisible);
         _updatingFilterControls = false;
+        foreach (var column in Files.Columns)
+            column.SortDirection = column.SortMemberPath == tab.SortColumn
+                ? tab.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending
+                : null;
         UpdateStatus();
         _ = SyncFolderTreeAsync();
     }
@@ -336,6 +403,7 @@ public partial class ExplorerPane : UserControl
             FilterBox.Focus();
             FilterBox.SelectAll();
         }
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void FilterBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -345,6 +413,7 @@ public partial class ExplorerPane : UserControl
         tab.FilterText = FilterBox.Text;
         _filterTimer.Stop();
         _filterTimer.Start();
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void ShowHidden_Changed(object sender, RoutedEventArgs e)
@@ -355,6 +424,31 @@ public partial class ExplorerPane : UserControl
         tab.View.Refresh();
         UpdateStatus();
         _ = SyncFolderTreeAsync();
+        SessionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static void ApplyTabSort(ExplorerTab tab)
+    {
+        tab.View.SortDescriptions.Clear();
+        if (!string.IsNullOrEmpty(tab.SortColumn))
+            tab.View.SortDescriptions.Add(new SortDescription(tab.SortColumn,
+                tab.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending));
+    }
+
+    private void Files_Sorting(object sender, DataGridSortingEventArgs e)
+    {
+        if (SelectedTab is not { } tab || string.IsNullOrWhiteSpace(e.Column.SortMemberPath))
+            return;
+        e.Handled = true;
+        var property = e.Column.SortMemberPath;
+        tab.SortDescending = tab.SortColumn == property && !tab.SortDescending;
+        tab.SortColumn = property;
+        ApplyTabSort(tab);
+        foreach (var column in Files.Columns)
+            column.SortDirection = column == e.Column
+                ? tab.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending
+                : null;
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void Drives_Click(object sender, RoutedEventArgs e)
@@ -564,6 +658,7 @@ public partial class ExplorerPane : UserControl
                 SetFilterVisible(true);
                 FilterBox.Focus();
                 FilterBox.SelectAll();
+                SessionChanged?.Invoke(this, EventArgs.Empty);
             }
         }
         else if (Keyboard.Modifiers == ModifierKeys.Alt && key == Key.Left)
@@ -583,6 +678,7 @@ public partial class ExplorerPane : UserControl
             active.FilterVisible = false;
             SetFilterVisible(false);
             Files.Focus();
+            SessionChanged?.Invoke(this, EventArgs.Empty);
         }
         else if (Files.IsKeyboardFocusWithin)
         {
@@ -624,6 +720,8 @@ public partial class ExplorerPane : UserControl
         public string FilterText { get; set; } = "";
         public bool FilterVisible { get; set; }
         public bool ShowHidden { get; set; }
+        public string? SortColumn { get; set; }
+        public bool SortDescending { get; set; }
         public bool IsLoading { get; set; }
         public bool IsCheckingPath { get; set; }
         public string? Error { get; set; }

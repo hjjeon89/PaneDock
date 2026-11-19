@@ -134,8 +134,9 @@
                       AlternationCount="2" RowHeight="29"
                       ContextMenuOpening="Files_ContextMenuOpening"
                       PreviewMouseRightButtonDown="Files_PreviewMouseRightButtonDown"
-                      MouseDoubleClick="Files_MouseDoubleClick"
-                      SelectionChanged="Files_SelectionChanged">
+                       MouseDoubleClick="Files_MouseDoubleClick"
+                       Sorting="Files_Sorting"
+                       SelectionChanged="Files_SelectionChanged">
                 <DataGrid.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="새 폴더" Tag="NewFolder" InputGestureText="Ctrl+Shift+N" Click="FileCommand_Click"/>

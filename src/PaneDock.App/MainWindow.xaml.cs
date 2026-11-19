@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         var session = _sessionStore.Load();
+        RestoreWindowPlacement(session?.WindowPlacement);
         if (session is not null)
         {
             foreach (var (layout, ratio) in session.LayoutRatios)
@@ -50,6 +51,24 @@ public partial class MainWindow : Window
         {
             pane.Activated += (_, _) => SetActivePane(pane);
             pane.SessionChanged += (_, _) => ScheduleSessionSave();
+            pane.MoveTabRequested += (source, target) =>
+            {
+                if (target is < 1 or > 4 || source.Number == target)
+                    return;
+                var transfer = source.GetActiveTabTransfer();
+                if (transfer is null) return;
+                if (target > PaneLayoutInfo.GetPaneCount(_layout))
+                    ApplyLayout(target switch
+                    {
+                        2 => PaneLayout.TwoColumns,
+                        3 => PaneLayout.ThreeLeft,
+                        _ => PaneLayout.FourGrid
+                    });
+                _panes[target - 1].ReceiveTab(transfer.Value.Path, transfer.Value.State);
+                source.FinishTabMove();
+                SetActivePane(_panes[target - 1]);
+                ScheduleSessionSave();
+            };
             pane.FileLocationsChanged += folders =>
             {
                 foreach (var other in _panes)
@@ -61,6 +80,9 @@ public partial class MainWindow : Window
         var activePaneNumber = session?.ActivePaneNumber ?? 1;
         SetActivePane(_panes[Math.Clamp(activePaneNumber - 1, 0, _panes.Length - 1)]);
         _initializing = false;
+        LocationChanged += (_, _) => ScheduleSessionSave();
+        SizeChanged += (_, _) => ScheduleSessionSave();
+        StateChanged += (_, _) => ScheduleSessionSave();
         Closing += (_, _) =>
         {
             _sessionSaveTimer.Stop();
@@ -181,7 +203,8 @@ public partial class MainWindow : Window
                     {
                         FirstColumn = pair.Value.FirstColumn,
                         FirstRow = pair.Value.FirstRow
-                    }),
+                }),
+                WindowPlacement = CaptureWindowPlacement(),
                 Panes = _panes.Select(pane => pane.CaptureSession()).ToList()
             });
         }
@@ -190,6 +213,46 @@ public partial class MainWindow : Window
         {
             Trace.WriteLine($"PaneDock 작업공간 저장 실패: {ex}");
         }
+    }
+
+    private void RestoreWindowPlacement(WindowPlacementSession? placement)
+    {
+        if (placement is null) return;
+
+        var visible = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+        var requested = new Rect(placement.Left, placement.Top, placement.Width, placement.Height);
+        var intersection = Rect.Intersect(visible, requested);
+        // A disconnected monitor can leave windows entirely outside the desktop.
+        // Falling back to the centered default is safer than a hidden window.
+        if (intersection.IsEmpty || intersection.Width < 180 || intersection.Height < 100)
+            return;
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = placement.Left;
+        Top = placement.Top;
+        Width = placement.Width;
+        Height = placement.Height;
+        if (placement.IsMaximized)
+            Loaded += (_, _) => WindowState = WindowState.Maximized;
+    }
+
+    private WindowPlacementSession CaptureWindowPlacement()
+    {
+        var bounds = WindowState != WindowState.Normal ? RestoreBounds
+            : new Rect(Left, Top, ActualWidth, ActualHeight);
+        if (bounds.IsEmpty || !double.IsFinite(bounds.Left) || !double.IsFinite(bounds.Top)
+            || bounds.Width < MinWidth || bounds.Height < MinHeight)
+            bounds = new Rect(100, 100, Math.Max(MinWidth, Width), Math.Max(MinHeight, Height));
+
+        return new WindowPlacementSession
+        {
+            Left = bounds.Left,
+            Top = bounds.Top,
+            Width = bounds.Width,
+            Height = bounds.Height,
+            IsMaximized = WindowState == WindowState.Maximized
+        };
     }
 
     private void CaptureCurrentLayoutRatios()

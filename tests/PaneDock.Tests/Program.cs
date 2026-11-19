@@ -244,6 +244,10 @@ try
         Layout = PaneLayout.FourGrid,
         ActivePaneNumber = 3,
         IsDarkTheme = true,
+        WindowPlacement = new WindowPlacementSession
+        {
+            Left = 125, Top = 85, Width = 1440, Height = 900, IsMaximized = true
+        },
         LayoutRatios = new Dictionary<PaneLayout, PaneSplitRatios>
         {
             [PaneLayout.TwoColumns] = new() { FirstColumn = 0.32 },
@@ -255,7 +259,13 @@ try
             new PaneSession
             {
                 TabPaths = [ExplorerLocations.ThisPc, Path.GetFullPath(sessionRoot)],
-                ActiveTabIndex = 1
+                ActiveTabIndex = 1,
+                TabStates =
+                [
+                    new TabViewState { FilterVisible = true, FilterText = "image", ShowHidden = true,
+                        SortColumn = "Size", SortDescending = true },
+                    new TabViewState { FilterText = "logs", SortColumn = "ModifiedAt" }
+                ]
             },
             new PaneSession { TabPaths = [Path.GetFullPath(Path.GetTempPath())] }
         ]
@@ -267,6 +277,8 @@ try
     Assert(restored!.Layout == PaneLayout.FourGrid && restored.ActivePaneNumber == 3,
         "패널 구성과 활성 패널 복원 실패");
     Assert(restored.IsDarkTheme, "Dark 테마 저장/로드 실패");
+    Assert(restored.WindowPlacement is { IsMaximized: true, Left: 125, Top: 85,
+        Width: 1440, Height: 900 }, "창 위치/크기/최대화 상태 왕복 저장 실패");
     Assert(restored.LayoutRatios.Count == 3 && Math.Abs(restored.LayoutRatios[PaneLayout.TwoColumns].FirstColumn - 0.32) < 1e-8,
         "레이아웃별 분할 비율 JSON 왕복 저장 오류");
     Assert(Math.Abs(restored.LayoutRatios[PaneLayout.ThreeTop].FirstRow - 0.61) < 1e-8
@@ -278,6 +290,15 @@ try
         "저장한 폴더 경로가 달라짐");
     Assert(restored.Panes[3].TabPaths.SequenceEqual([ExplorerLocations.ThisPc]),
         "저장하지 않은 패널의 기본 위치 오류");
+    Assert(restored.Panes[0].TabStates.Count == 2
+        && restored.Panes[0].TabStates[0] is { FilterVisible: true, ShowHidden: true,
+            FilterText: "image", SortColumn: "Size", SortDescending: true },
+        "탭별 필터/숨김/정렬 복원 실패");
+    Assert(restored.Panes[0].TabStates[1] is { FilterText: "logs",
+        SortColumn: "ModifiedAt", SortDescending: false }, "각 탭 설정 독립 저장 실패");
+    Assert(restored.Panes[1].TabStates.Count == 1
+        && restored.Panes[1].TabStates[0].FilterText == "",
+        "이전 버전 탭의 기본 설정 생성 실패");
     Assert(Directory.GetFiles(sessionRoot).Length == 1, "원자적 저장 임시 파일이 남아 있음");
 
     var invalid = WorkspaceSessionStore.Normalize(new WorkspaceSession
@@ -290,6 +311,7 @@ try
         "잘못된 활성 패널 또는 탭 인덱스 정규화 실패");
     Assert(invalid.Panes[0].TabPaths.All(ExplorerLocations.IsThisPc),
         "상대 경로 또는 빈 경로는 내 PC로 복원되어야 함");
+    Assert(invalid.WindowPlacement is null, "미지정 창 위치는 자동으로 생성하면 안 됨");
 
     var sanitized = WorkspaceSessionStore.Normalize(new WorkspaceSession
     {
@@ -308,10 +330,44 @@ try
         && sanitized.LayoutRatios[PaneLayout.FourGrid].FirstRow == 0.5,
         "비정상 NaN/Infinity 분할 비율 처리 실패");
 
+    var unsafeWindow = WorkspaceSessionStore.Normalize(new WorkspaceSession
+    {
+        WindowPlacement = new WindowPlacementSession
+        {
+            Left = double.PositiveInfinity, Top = 0, Width = 100, Height = 100
+        },
+        Panes = [new PaneSession
+        {
+            TabPaths = [ExplorerLocations.ThisPc],
+            TabStates = [new TabViewState
+            {
+                FilterText = new string('x', 400),
+                SortColumn = "__UnexpectedColumn__", SortDescending = true
+            }]
+        }]
+    });
+    Assert(unsafeWindow.WindowPlacement is null, "잘못된 창 위치 검증 실패");
+    Assert(unsafeWindow.Panes[0].TabStates[0].FilterText.Length == 256,
+        "비정상적으로 긴 필터 문자열 길이 제한 실패");
+    Assert(unsafeWindow.Panes[0].TabStates[0].SortColumn is null,
+        "지원하지 않는 정렬 컬럼 허용 오류");
+
+    var undersizedWindow = WorkspaceSessionStore.Normalize(new WorkspaceSession
+    {
+        WindowPlacement = new WindowPlacementSession
+        {
+            Left = 0, Top = 0, Width = 759, Height = 1000
+        }
+    });
+    Assert(undersizedWindow.WindowPlacement is null,
+        "최소 너비보다 작은 창 크기를 저장함");
+
     File.WriteAllText(sessionFile, "{\"Version\":1,\"Layout\":\"TwoColumns\",\"ActivePaneNumber\":1}");
     var legacy = store.Load();
     Assert(legacy is { IsDarkTheme: false } && legacy.LayoutRatios.Count == 0
         && legacy.Panes.Count == 4, "기존 Version 1 저장 파일 호환성 문제");
+    Assert(legacy is { WindowPlacement: null } && legacy.Panes[0].TabStates.Count == 1,
+        "이전 Version 1 설정에 새 속성이 없으면 기본 상태로 읽어야 함");
 
     File.WriteAllText(sessionFile, "{invalid json");
     Assert(store.Load() is null, "손상된 JSON에서 안전하게 기본 화면으로 복구하지 못함");
