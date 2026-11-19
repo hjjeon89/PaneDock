@@ -89,7 +89,8 @@
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="폴더 분석" ToolTip="선택한 폴더의 파일 수와 용량 분석"
                         Click="FolderAnalysis_Click"/>
-                <Button Content="일괄 변경" IsEnabled="False" ToolTip="Phase 6 예정"/>
+                <Button Content="일괄 변경" ToolTip="선택 파일의 이름/확장자 일괄 변경과 미리보기"
+                        Click="BatchRename_Click"/>
             </StackPanel>
         </DockPanel>
         <Grid Grid.Row="2" x:Name="PaneHost" Margin="0,4,0,8"/>

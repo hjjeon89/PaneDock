@@ -41,6 +41,11 @@ public partial class ExplorerPane : UserControl
         return ExplorerLocations.IsThisPc(CurrentPath) ? [] : [CurrentPath];
     }
 
+    public IReadOnlyList<string> GetSelectedFilesForBatchRename() =>
+        Files.SelectedItems.OfType<ExplorerEntry>()
+            .Where(item => !item.IsDirectory && !item.IsDrive)
+            .Select(item => item.FullPath).ToArray();
+
     public void NavigateTo(string path)
     {
         if (SelectedTab is { } tab)

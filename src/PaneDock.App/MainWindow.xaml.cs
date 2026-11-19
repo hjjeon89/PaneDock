@@ -133,6 +133,21 @@ public partial class MainWindow : Window
         window.Show();
     }
 
+    private void BatchRename_Click(object sender, RoutedEventArgs e)
+    {
+        var pane = _activePane ?? _panes[0];
+        var window = new BatchRenameWindow(pane.GetSelectedFilesForBatchRename(), pane.CurrentPath)
+        {
+            Owner = this
+        };
+        window.FilesChanged += folders =>
+        {
+            foreach (var explorerPane in _panes)
+                explorerPane.RefreshLocations(folders);
+        };
+        window.Show();
+    }
+
     private void GlobalSearch_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;

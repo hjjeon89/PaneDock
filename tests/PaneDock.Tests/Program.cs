@@ -278,6 +278,114 @@ finally
         Directory.Delete(analysisRoot, recursive: true);
 }
 
+// Phase 6: real, non-overwriting batch rename and undo in a disposable folder.
+var batchRoot = Path.Combine(Path.GetTempPath(), "PaneDock-rename-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(batchRoot);
+try
+{
+    var service = new BatchRenameService();
+    var first = Path.Combine(batchRoot, "report.txt");
+    var second = Path.Combine(batchRoot, "diagram.log");
+    File.WriteAllText(first, "keep report bytes");
+    File.WriteAllText(second, "keep log bytes");
+    var plan = service.BuildPreview([first, second],
+        new BatchRenameOptions(Prefix: "new_"));
+    Assert(plan.CanExecute && plan.ChangeCount == 2 && plan.ErrorCount == 0,
+        "일괄 접두사 미리보기 오류");
+    Assert(plan.Items.Any(item => item.NewName == "new_report.txt")
+        && plan.Items.Any(item => item.NewName == "new_diagram.log"),
+        "변경 전/후 이름 계산 오류");
+    var changed = await service.ExecuteAsync(plan, null, CancellationToken.None);
+    Assert(changed.Success && changed.ChangedCount == 2, "실제 일괄 이름 변경 실패");
+    Assert(!File.Exists(first) && !File.Exists(second)
+        && File.Exists(Path.Combine(batchRoot, "new_report.txt"))
+        && File.Exists(Path.Combine(batchRoot, "new_diagram.log")),
+        "일괄 실행 후 파일 이동 결과 오류");
+    var undo = await service.ExecuteAsync(
+        BatchRenameService.CreateUndoPlan(plan), null, CancellationToken.None);
+    Assert(undo.Success && File.Exists(first) && File.Exists(second)
+        && File.ReadAllText(first) == "keep report bytes",
+        "일괄 변경 되돌리기/파일 내용 보존 실패");
+    Assert(!Directory.EnumerateFiles(batchRoot, ".panedock-*.tmp").Any(),
+        "성공/되돌리기 이후 임시 파일 잔류");
+
+    var extPlan = service.BuildPreview([first, second],
+        new BatchRenameOptions(ChangeExtension: true, Extension: ".csv"));
+    Assert(extPlan.CanExecute && extPlan.Items.All(item => item.NewName.EndsWith(".csv")),
+        "여러 확장자를 한 확장자로 바꾸는 미리보기 오류");
+    var extApply = await service.ExecuteAsync(extPlan, null, CancellationToken.None);
+    Assert(extApply.Success
+        && File.Exists(Path.Combine(batchRoot, "report.csv"))
+        && File.Exists(Path.Combine(batchRoot, "diagram.csv")),
+        "다중 확장자 변경 실패");
+    Assert((await service.ExecuteAsync(BatchRenameService.CreateUndoPlan(extPlan),
+            null, CancellationToken.None)).Success,
+        "확장자 변경 후 되돌리기 실패");
+
+    var collision = Path.Combine(batchRoot, "report.csv");
+    File.WriteAllText(collision, "do-not-overwrite");
+    var conflict = service.BuildPreview([first],
+        new BatchRenameOptions(ChangeExtension: true, Extension: "csv"));
+    Assert(conflict.ErrorCount == 1 && !conflict.CanExecute,
+        "기존 파일과의 이름 충돌을 미리보기에서 차단하지 않음");
+    var blocked = await service.ExecuteAsync(conflict, null, CancellationToken.None);
+    Assert(!blocked.Success && File.ReadAllText(collision) == "do-not-overwrite"
+        && File.Exists(first), "기존 파일을 덮어쓰거나 원본을 변경함");
+
+    var invalidName = service.BuildPreview([first],
+        new BatchRenameOptions(Prefix: "../"));
+    Assert(invalidName.ErrorCount == 1, "경로 구분자 포함 이름 변경이 허용됨");
+    var unchanged = service.BuildPreview([first], new BatchRenameOptions());
+    Assert(!unchanged.CanExecute && unchanged.ChangeCount == 0,
+        "변경 없음인데 실행을 허용함");
+    var missing = service.BuildPreview([Path.Combine(batchRoot, "missing.txt")],
+        new BatchRenameOptions(Prefix: "new_"));
+    Assert(missing.ErrorCount == 1, "없는 원본 파일 변경이 허용됨");
+
+    var one = Path.Combine(batchRoot, "a-a.txt");
+    var two = Path.Combine(batchRoot, "aa.txt");
+    File.WriteAllText(one, "one");
+    File.WriteAllText(two, "two");
+    var duplicateTarget = service.BuildPreview([one, two],
+        new BatchRenameOptions(FindText: "-", ReplaceText: ""));
+    Assert(duplicateTarget.ErrorCount == 2 && !duplicateTarget.CanExecute,
+        "두 파일의 동일한 변경 대상 이름 충돌을 놓침");
+
+    var casePath = Path.Combine(batchRoot, "lowercase.txt");
+    File.WriteAllText(casePath, "case only");
+    var casePlan = service.BuildPreview([casePath],
+        new BatchRenameOptions(FindText: "lowercase", ReplaceText: "LOWERCASE"));
+    Assert(casePlan.CanExecute, "대소문자만 바꾸는 작업이 차단됨");
+    Assert((await service.ExecuteAsync(casePlan, null, CancellationToken.None)).Success
+        && Directory.EnumerateFiles(batchRoot).Any(path =>
+            Path.GetFileName(path) == "LOWERCASE.txt"), "대소문자 변경 실패");
+    Assert((await service.ExecuteAsync(BatchRenameService.CreateUndoPlan(casePlan),
+        null, CancellationToken.None)).Success, "대소문자 변경 되돌리기 실패");
+
+    var latePlan = service.BuildPreview([first],
+        new BatchRenameOptions(Prefix: "late_"));
+    var lateTarget = Path.Combine(batchRoot, "late_report.txt");
+    File.WriteAllText(lateTarget, "external");
+    var rejected = await service.ExecuteAsync(latePlan, null, CancellationToken.None);
+    Assert(!rejected.Success && File.Exists(first)
+        && File.ReadAllText(lateTarget) == "external",
+        "미리보기 후 외부 파일 생성 충돌 차단 실패");
+
+    using var cancelRename = new CancellationTokenSource();
+    cancelRename.Cancel();
+    var canceledResult = await service.ExecuteAsync(service.BuildPreview([first],
+        new BatchRenameOptions(Prefix: "cancel_")), null, cancelRename.Token);
+    Assert(!canceledResult.Success && File.Exists(first)
+        && !File.Exists(Path.Combine(batchRoot, "cancel_report.txt")),
+        "취소된 일괄 변경이 원본을 수정함");
+    Assert(!Directory.EnumerateFiles(batchRoot, ".panedock-*.tmp").Any(),
+        "일괄 이름 변경 임시 작업 파일이 남아 있음");
+}
+finally
+{
+    Directory.Delete(batchRoot, recursive: true);
+}
+
 // File operations are exercised only against a freshly created, isolated temporary folder.
 // No test file from the user workspace is renamed, moved or deleted.
 if (OperatingSystem.IsWindows())
