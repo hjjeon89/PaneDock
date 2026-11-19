@@ -10,6 +10,40 @@ public sealed class DirectoryListingService
 {
     private const int BatchSize = 256;
 
+    /// <summary>
+    /// Captures an entire directory off the UI thread. Used for change diffs
+    /// so the visible list and selection need not be cleared on every event.
+    /// </summary>
+    public Task<IReadOnlyList<ExplorerEntry>> GetSnapshotAsync(string path, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        return Task.Run<IReadOnlyList<ExplorerEntry>>(() =>
+        {
+            if (ExplorerLocations.IsThisPc(path))
+                return GetDriveEntries(cancellationToken);
+
+            var results = new List<ExplorerEntry>();
+            foreach (var info in new DirectoryInfo(path).EnumerateFileSystemInfos())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (TryCreateEntry(info) is { } entry)
+                    results.Add(entry);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return results;
+        }, cancellationToken);
+    }
+
+    private static ExplorerEntry[] GetDriveEntries(CancellationToken token) =>
+        DriveInfo.GetDrives()
+            .OrderBy(drive => drive.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(drive =>
+            {
+                token.ThrowIfCancellationRequested();
+                return new ExplorerEntry(drive.Name, drive.Name, "", null,
+                    DateTime.MinValue, true, IsDrive: true);
+            }).ToArray();
+
     public Task<DirectoryInfo[]> GetFoldersAsync(string path, bool showHidden) =>
         Task.Run(() => new DirectoryInfo(path).EnumerateDirectories("*", new EnumerationOptions
         {
@@ -27,6 +61,14 @@ public sealed class DirectoryListingService
 
         return Task.Run(() =>
         {
+            if (ExplorerLocations.IsThisPc(path))
+            {
+                var drives = GetDriveEntries(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                progress.Report(drives);
+                return;
+            }
+
             var batch = new List<ExplorerEntry>(BatchSize);
 
             foreach (var info in new DirectoryInfo(path).EnumerateFileSystemInfos())

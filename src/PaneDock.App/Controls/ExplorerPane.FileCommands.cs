@@ -21,17 +21,20 @@ public partial class ExplorerPane
     internal void RefreshLocations(string[] folders)
     {
         foreach (var tab in _tabs.Where(tab => !tab.IsCheckingPath && folders.Any(folder => SamePath(tab.Path, folder))))
-            _ = NavigateAsync(tab, tab.Path, addHistory: false);
+            RequestSnapshotRefresh(tab);
         InvalidateTree(folders);
     }
 
     private static bool SamePath(string left, string right) =>
-        string.Equals(Path.TrimEndingDirectorySeparator(left), Path.TrimEndingDirectorySeparator(right),
-            StringComparison.OrdinalIgnoreCase);
+        ExplorerLocations.IsThisPc(left) || ExplorerLocations.IsThisPc(right)
+            ? ExplorerLocations.IsThisPc(left) && ExplorerLocations.IsThisPc(right)
+            : string.Equals(Path.TrimEndingDirectorySeparator(left), Path.TrimEndingDirectorySeparator(right),
+                StringComparison.OrdinalIgnoreCase);
 
     private bool CanRunFileCommand(FileCommand command)
     {
-        if (_fileOperationRunning || SelectedTab is not { Path.Length: > 0, IsCheckingPath: false })
+        if (_fileOperationRunning || SelectedTab is not { Path.Length: > 0, IsCheckingPath: false }
+            || ExplorerLocations.IsThisPc(SelectedTab.Path))
             return false;
 
         return command switch

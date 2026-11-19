@@ -27,11 +27,14 @@ public partial class ExplorerPane
     private async Task SyncFolderTreeAsync()
     {
         var request = ++_treeGeneration;
-        if (TreeToggle.IsChecked != true || SelectedTab is not { Path.Length: > 0 } tab
-            || Path.GetPathRoot(tab.Path) is not { Length: > 0 } root)
+        if (TreeToggle.IsChecked != true || SelectedTab is not { Path.Length: > 0 } tab)
             return;
 
         var currentPath = tab.Path;
+        var thisPc = PaneDock.Core.Models.ExplorerLocations.IsThisPc(currentPath);
+        var root = thisPc ? null : Path.GetPathRoot(currentPath);
+        if (!thisPc && string.IsNullOrEmpty(root))
+            return;
         if (_treeShowsHidden != tab.ShowHidden)
         {
             _treeShowsHidden = tab.ShowHidden;
@@ -57,14 +60,29 @@ public partial class ExplorerPane
                 FolderTree.Items.Add(new FolderNode(drive, drive));
         }
 
-        var node = FindFolder(FolderTree.Items, root);
+        if (thisPc)
+        {
+            _selectingTreeNode = true;
+            try
+            {
+                if (FolderTree.SelectedItem is FolderNode selected)
+                    selected.IsSelected = false;
+            }
+            finally
+            {
+                _selectingTreeNode = false;
+            }
+            return;
+        }
+
+        var node = FindFolder(FolderTree.Items, root!);
         if (node is null)
         {
-            node = new FolderNode(root, root);
+            node = new FolderNode(root!, root!);
             FolderTree.Items.Add(node);
         }
 
-        foreach (var part in currentPath[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var part in currentPath[root!.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
         {
             node.IsExpanded = true;
             await LoadTreeChildrenAsync(node);

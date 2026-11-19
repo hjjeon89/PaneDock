@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
@@ -19,15 +20,18 @@ public partial class ExplorerPane : UserControl
     private readonly List<ExplorerTab> _tabs = [];
     private readonly DispatcherTimer _filterTimer;
     private ExplorerTab? _displayedTab;
+    private bool _disposed;
     private bool _changingTab;
     private bool _updatingFilterControls;
+    private bool _applyingSnapshot;
     private int _tabCounter;
 
     public event EventHandler? Activated;
+    public event EventHandler? SessionChanged;
 
     public int Number { get; }
 
-    public ExplorerPane(int number, string initialPath)
+    public ExplorerPane(int number, PaneSession? saved = null)
     {
         InitializeComponent();
         Number = number;
@@ -42,8 +46,29 @@ public partial class ExplorerPane : UserControl
                 UpdateStatus();
             }
         };
-        AddTab(initialPath);
+        if (saved?.TabPaths is { Count: > 0 } paths)
+        {
+            foreach (var path in paths)
+                AddTab(path, restoreFallback: true);
+
+            _changingTab = true;
+            Tabs.SelectedIndex = Math.Clamp(saved.ActiveTabIndex, 0, _tabs.Count - 1);
+            _changingTab = false;
+            if (SelectedTab is { } selected)
+                ShowTab(selected);
+        }
+        else
+        {
+            AddTab(ExplorerLocations.ThisPc);
+        }
     }
+
+    public PaneSession CaptureSession() => new()
+    {
+        TabPaths = _tabs.Select(tab => string.IsNullOrWhiteSpace(tab.Path)
+            ? tab.RequestedPath : tab.Path).ToList(),
+        ActiveTabIndex = Math.Max(0, Tabs.SelectedIndex)
+    };
 
     public void SetActive(bool active)
     {
@@ -55,9 +80,9 @@ public partial class ExplorerPane : UserControl
 
     private ExplorerTab? SelectedTab => (Tabs.SelectedItem as TabItem)?.Tag as ExplorerTab;
 
-    private void AddTab(string path)
+    private void AddTab(string path, bool restoreFallback = false)
     {
-        var tab = new ExplorerTab();
+        var tab = new ExplorerTab { RequestedPath = path };
         _tabs.Add(tab);
         var label = new TextBlock { Text = $"탭 {++_tabCounter}", VerticalAlignment = VerticalAlignment.Center };
         var close = new Button
@@ -83,8 +108,9 @@ public partial class ExplorerPane : UserControl
         Tabs.SelectedIndex = _tabs.Count - 1;
         _changingTab = false;
         ShowTab(tab);
-        _ = NavigateAsync(tab, path, addHistory: true);
+        _ = NavigateAsync(tab, path, addHistory: true, restoreFallback: restoreFallback);
         Activated?.Invoke(this, EventArgs.Empty);
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void CloseTab_Click(object sender, RoutedEventArgs e)
@@ -113,10 +139,15 @@ public partial class ExplorerPane : UserControl
         tab.Dispose();
         if (SelectedTab is { } next)
             ShowTab(next);
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private async Task NavigateAsync(ExplorerTab tab, string path, bool addHistory, int? historyIndex = null)
+    private async Task NavigateAsync(
+        ExplorerTab tab, string path, bool addHistory,
+        int? historyIndex = null, bool restoreFallback = false)
     {
+        if (_disposed || tab.IsDisposed)
+            return;
         tab.CancelCurrentLoad();
         var request = tab.Generation;
         var token = tab.Cancellation.Token;
@@ -129,8 +160,10 @@ public partial class ExplorerPane : UserControl
         string fullPath;
         try
         {
-            fullPath = Path.GetFullPath(path);
-            if (!await Task.Run(() => Directory.Exists(fullPath), token))
+            fullPath = ExplorerLocations.IsThisPc(path) || string.Equals(path.Trim(), "내 PC", StringComparison.Ordinal)
+                ? ExplorerLocations.ThisPc : Path.GetFullPath(path);
+            if (!ExplorerLocations.IsThisPc(fullPath)
+                && !await Task.Run(() => Directory.Exists(fullPath), token))
                 throw new DirectoryNotFoundException($"폴더를 찾을 수 없습니다: {fullPath}");
         }
         catch (OperationCanceledException)
@@ -139,6 +172,11 @@ public partial class ExplorerPane : UserControl
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException)
         {
+            if (restoreFallback && tab.Generation == request)
+            {
+                await NavigateAsync(tab, ExplorerLocations.ThisPc, addHistory: true);
+                return;
+            }
             if (tab.Generation == request)
             {
                 tab.Error = ex.Message;
@@ -153,12 +191,23 @@ public partial class ExplorerPane : UserControl
         if (tab.Generation != request)
             return;
 
+        ConfigureWatcher(tab, fullPath);
         tab.IsCheckingPath = false;
+        if (!SamePath(tab.Path, fullPath))
+        {
+            // The filename filter applies to the folder in which it was typed;
+            // navigating to Desktop/another folder should show its contents.
+            tab.FilterText = "";
+            tab.View.Refresh();
+        }
         tab.Items.Clear();
         tab.SelectedEntries.Clear();
         tab.Path = fullPath;
-        tab.HeaderLabel.Text = Path.GetFileName(Path.TrimEndingDirectorySeparator(fullPath)) is { Length: > 0 } name
-            ? name : fullPath;
+        tab.RequestedPath = fullPath;
+        tab.HeaderLabel.Text = ExplorerLocations.IsThisPc(fullPath)
+            ? "내 PC"
+            : Path.GetFileName(Path.TrimEndingDirectorySeparator(fullPath)) is { Length: > 0 } name
+                ? name : fullPath;
         if (addHistory)
         {
             tab.History.RemoveRange(tab.HistoryIndex + 1, tab.History.Count - tab.HistoryIndex - 1);
@@ -172,6 +221,7 @@ public partial class ExplorerPane : UserControl
 
         if (ReferenceEquals(SelectedTab, tab))
             ShowTab(tab);
+        SessionChanged?.Invoke(this, EventArgs.Empty);
 
         var progress = new Progress<IReadOnlyList<ExplorerEntry>>(batch =>
         {
@@ -203,6 +253,8 @@ public partial class ExplorerPane : UserControl
                 tab.IsLoading = false;
                 if (ReferenceEquals(SelectedTab, tab))
                     UpdateStatus();
+                if (tab.RefreshQueued)
+                    RequestSnapshotRefresh(tab);
             }
         }
     }
@@ -227,7 +279,9 @@ public partial class ExplorerPane : UserControl
         }
 
         _updatingFilterControls = true;
-        Address.Text = tab.Path;
+        Address.Text = ExplorerLocations.IsThisPc(tab.Path) ? "내 PC" : tab.Path;
+        EndAddressEdit();
+        RefreshBreadcrumb(tab.Path);
         FilterBox.Text = tab.FilterText;
         ShowHidden.IsChecked = tab.ShowHidden;
         SetFilterVisible(tab.FilterVisible);
@@ -249,7 +303,8 @@ public partial class ExplorerPane : UserControl
         var selected = Files.SelectedItems.Count;
         Status.Text = $"{count:N0}개 표시 / 전체 {tab.Items.Count:N0}개"
             + (selected > 0 ? $" · {selected:N0}개 선택" : "")
-            + (tab.IsLoading ? " · 읽는 중…" : "");
+            + (tab.IsLoading ? " · 읽는 중…" : "")
+            + (tab.WatchError is not null ? " · 자동 감시 연결 대기 중 (F5로 갱신 가능)" : "");
     }
 
     private void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -258,10 +313,11 @@ public partial class ExplorerPane : UserControl
             return;
         ShowTab(tab);
         Activated?.Invoke(this, EventArgs.Empty);
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void NewTab_Click(object sender, RoutedEventArgs e) =>
-        AddTab(SelectedTab?.Path ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        AddTab(SelectedTab?.Path ?? ExplorerLocations.ThisPc);
 
     private void SetFilterVisible(bool visible)
     {
@@ -301,50 +357,120 @@ public partial class ExplorerPane : UserControl
         _ = SyncFolderTreeAsync();
     }
 
-    private async void Drives_Click(object sender, RoutedEventArgs e)
+    private void Drives_Click(object sender, RoutedEventArgs e)
     {
-        string[] drives;
-        try
-        {
-            drives = await Task.Run(() => DriveInfo.GetDrives().Select(d => d.Name).ToArray());
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Status.Text = $"드라이브 목록 오류: {ex.Message}";
-            return;
-        }
+        if (SelectedTab is { } tab && !ExplorerLocations.IsThisPc(tab.Path))
+            _ = NavigateAsync(tab, ExplorerLocations.ThisPc, addHistory: true);
+    }
 
-        var menu = new ContextMenu { PlacementTarget = DrivesButton };
-        var home = new MenuItem { Header = "⌂  사용자 폴더" };
-        home.Click += (_, _) =>
-        {
-            if (SelectedTab is { } tab)
-                _ = NavigateAsync(tab, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), addHistory: true);
-        };
-        menu.Items.Add(home);
-        menu.Items.Add(new Separator());
-
-        foreach (var root in drives)
-        {
-            var item = new MenuItem { Header = $"▣  {root}", Tag = root };
-            item.Click += (_, _) =>
-            {
-                if (SelectedTab is { } tab)
-                    _ = NavigateAsync(tab, root, addHistory: true);
-            };
-            menu.Items.Add(item);
-        }
-
-        DrivesButton.ContextMenu = menu;
-        menu.IsOpen = true;
+    private void Desktop_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedTab is { } tab)
+            _ = NavigateAsync(tab,
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                addHistory: true);
     }
 
     private void Address_KeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            EndAddressEdit();
+            return;
+        }
         if (e.Key != Key.Enter || SelectedTab is not { } tab)
             return;
         e.Handled = true;
         _ = NavigateAsync(tab, Address.Text, addHistory: true);
+    }
+
+    private void BeginAddressEdit()
+    {
+        if (SelectedTab is not { } tab)
+            return;
+        Address.Text = ExplorerLocations.IsThisPc(tab.Path) ? "내 PC" : tab.Path;
+        BreadcrumbSurface.Visibility = Visibility.Collapsed;
+        Address.Visibility = Visibility.Visible;
+        Address.Focus();
+        Address.SelectAll();
+    }
+
+    private void EndAddressEdit()
+    {
+        Address.Visibility = Visibility.Collapsed;
+        BreadcrumbSurface.Visibility = Visibility.Visible;
+    }
+
+    private void EditAddress_Click(object sender, RoutedEventArgs e) => BeginAddressEdit();
+
+    private void BreadcrumbSurface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2
+            && (e.OriginalSource is not DependencyObject origin || FindParent<Button>(origin) is null))
+        {
+            e.Handled = true;
+            BeginAddressEdit();
+        }
+    }
+
+    private void RefreshBreadcrumb(string path)
+    {
+        BreadcrumbItems.Children.Clear();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        var segments = ExplorerLocations.IsThisPc(path)
+            ? [new BreadcrumbSegment("내 PC", ExplorerLocations.ThisPc)]
+            : PathBreadcrumb.Build(path).ToArray();
+
+        foreach (var segment in segments)
+        {
+            if (BreadcrumbItems.Children.Count > 0)
+            {
+                BreadcrumbItems.Children.Add(new TextBlock
+                {
+                    Text = "›", FontSize = 14, Margin = new Thickness(1, 0, 1, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = (Brush)FindResource("TextSecondary")
+                });
+            }
+
+            var location = segment.FullPath;
+            var button = new Button
+            {
+                // A TextBlock preserves literal underscores (Button.Content otherwise
+                // interprets them as keyboard access-key markers).
+                Content = new TextBlock
+                {
+                    Text = segment.Label, TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 160
+                },
+                Tag = location,
+                ToolTip = location,
+                MinHeight = 25, Padding = new Thickness(4, 2, 4, 2),
+                Margin = new Thickness(0),
+                BorderThickness = new Thickness(0),
+                Background = Brushes.Transparent,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            AutomationProperties.SetName(button, segment.Label);
+            button.Click += (_, _) =>
+            {
+                if (SelectedTab is { } selected && !SamePath(selected.Path, location))
+                    _ = NavigateAsync(selected, location, addHistory: true);
+            };
+            BreadcrumbItems.Children.Add(button);
+        }
+
+        // Four-pane layouts are narrow: keep the last segments visible while
+        // preserving access to ancestors by horizontal scroll.
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (SamePath(SelectedTab?.Path ?? "", path))
+                BreadcrumbScroll.ScrollToRightEnd();
+        }, DispatcherPriority.Loaded);
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e)
@@ -358,11 +484,13 @@ public partial class ExplorerPane : UserControl
 
     private void Up_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedTab is not { } tab)
+        if (SelectedTab is not { } tab || ExplorerLocations.IsThisPc(tab.Path))
             return;
         var parent = Directory.GetParent(tab.Path);
         if (parent is not null)
             _ = NavigateAsync(tab, parent.FullName, addHistory: true);
+        else
+            _ = NavigateAsync(tab, ExplorerLocations.ThisPc, addHistory: true);
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -412,7 +540,7 @@ public partial class ExplorerPane : UserControl
 
     private void Files_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_changingTab)
+        if (!_changingTab && !_applyingSnapshot)
             UpdateStatus();
     }
 
@@ -421,13 +549,12 @@ public partial class ExplorerPane : UserControl
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var ctrl = Keyboard.Modifiers == ModifierKeys.Control;
         if (ctrl && key == Key.T)
-            AddTab(SelectedTab?.Path ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+            AddTab(SelectedTab?.Path ?? ExplorerLocations.ThisPc);
         else if (ctrl && key == Key.W && SelectedTab is { } current)
             CloseTab(current);
         else if (ctrl && key == Key.L)
         {
-            Address.Focus();
-            Address.SelectAll();
+            BeginAddressEdit();
         }
         else if (ctrl && key == Key.F)
         {
@@ -447,6 +574,10 @@ public partial class ExplorerPane : UserControl
             Up_Click(this, new RoutedEventArgs());
         else if (key == Key.F5 && Keyboard.Modifiers == ModifierKeys.None)
             Refresh_Click(this, new RoutedEventArgs());
+        else if (key == Key.Escape && Address.IsVisible)
+        {
+            EndAddressEdit();
+        }
         else if (key == Key.Escape && SelectedTab is { FilterVisible: true } active)
         {
             active.FilterVisible = false;
@@ -485,6 +616,7 @@ public partial class ExplorerPane : UserControl
     private sealed class ExplorerTab
     {
         public string Path { get; set; } = "";
+        public string RequestedPath { get; set; } = ExplorerLocations.ThisPc;
         public ObservableCollection<ExplorerEntry> Items { get; } = [];
         public ICollectionView View { get; }
         public List<ExplorerEntry> SelectedEntries { get; } = [];
@@ -499,6 +631,11 @@ public partial class ExplorerPane : UserControl
         public int HistoryIndex { get; set; } = -1;
         public int Generation { get; private set; }
         public CancellationTokenSource Cancellation { get; private set; } = new();
+        public DirectoryChangeMonitor? Watcher { get; set; }
+        public string? WatchError { get; set; }
+        public bool RefreshRunning { get; set; }
+        public bool RefreshQueued { get; set; }
+        public bool IsDisposed { get; private set; }
 
         public ExplorerTab()
         {
@@ -517,6 +654,11 @@ public partial class ExplorerPane : UserControl
 
         public void Dispose()
         {
+            if (IsDisposed)
+                return;
+            IsDisposed = true;
+            Watcher?.Dispose();
+            Watcher = null;
             Cancellation.Cancel();
             Cancellation.Dispose();
             Generation++;

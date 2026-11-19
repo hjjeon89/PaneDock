@@ -9,6 +9,11 @@ public static class ExplorerItemFilter
     {
         ArgumentNullException.ThrowIfNull(item);
 
+        // Drive roots must remain selectable in the virtual "내 PC" location,
+        // even when a tab retains a filter from the previously visited folder.
+        if (item.IsDrive)
+            return true;
+
         if (!showHidden && item.IsHidden)
             return false;
 

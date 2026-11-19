@@ -3,14 +3,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <SolidColorBrush x:Key="WindowBackground" Color="#111827"/>
-        <SolidColorBrush x:Key="CardBackground" Color="#1E293B"/>
-        <SolidColorBrush x:Key="PanelBackground" Color="#172234"/>
-        <SolidColorBrush x:Key="BorderBrush" Color="#344357"/>
-        <SolidColorBrush x:Key="TextPrimary" Color="#F2F6FB"/>
-        <SolidColorBrush x:Key="TextSecondary" Color="#9DB0C8"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#4DADFF"/>
-        <SolidColorBrush x:Key="SelectionBrush" Color="#254E74"/>
+        <SolidColorBrush x:Key="WindowBackground" Color="#F2F5FA"/>
+        <SolidColorBrush x:Key="CardBackground" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="PanelBackground" Color="#F8FAFD"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="#CAD5E3"/>
+        <SolidColorBrush x:Key="TextPrimary" Color="#172338"/>
+        <SolidColorBrush x:Key="TextSecondary" Color="#52667E"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#1973C8"/>
+        <SolidColorBrush x:Key="SelectionBrush" Color="#C7E3FF"/>
         <Style TargetType="Window">
             <Setter Property="Background" Value="{DynamicResource WindowBackground}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>

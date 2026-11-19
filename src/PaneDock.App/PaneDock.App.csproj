@@ -7,8 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PaneDock</AssemblyName>
     <RootNamespace>PaneDock.App</RootNamespace>
+    <ApplicationIcon>Assets\PaneDock.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\PaneDock.Core\PaneDock.Core.csproj" />
+    <Resource Include="Assets\PaneDock.ico" />
+    <Resource Include="Assets\PaneDock.png" />
   </ItemGroup>
 </Project>

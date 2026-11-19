@@ -1,26 +1,41 @@
-﻿using System.Windows;
+﻿using System.Diagnostics;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using PaneDock.App.Controls;
 using PaneDock.Core.Models;
+using PaneDock.Core.Services;
 
 namespace PaneDock.App;
 
 public partial class MainWindow : Window
 {
     private readonly ExplorerPane[] _panes;
+    private readonly WorkspaceSessionStore _sessionStore = new();
+    private readonly DispatcherTimer _sessionSaveTimer;
     private PaneLayout _layout = PaneLayout.TwoColumns;
-    private bool _lightTheme;
+    private bool _lightTheme = true;
+    private bool _initializing = true;
     private ExplorerPane? _activePane;
 
     public MainWindow()
     {
         InitializeComponent();
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        _panes = Enumerable.Range(1, 4).Select(i => new ExplorerPane(i, home)).ToArray();
+        var session = _sessionStore.Load();
+        _sessionSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
+        _sessionSaveTimer.Tick += (_, _) =>
+        {
+            _sessionSaveTimer.Stop();
+            SaveSession();
+        };
+
+        _panes = Enumerable.Range(1, 4)
+            .Select(i => new ExplorerPane(i, session?.Panes.ElementAtOrDefault(i - 1))).ToArray();
         foreach (var pane in _panes)
         {
             pane.Activated += (_, _) => SetActivePane(pane);
+            pane.SessionChanged += (_, _) => ScheduleSessionSave();
             pane.FileLocationsChanged += folders =>
             {
                 foreach (var other in _panes)
@@ -28,8 +43,20 @@ public partial class MainWindow : Window
             };
         }
 
-        ApplyLayout(_layout);
-        SetActivePane(_panes[0]);
+        ApplyLayout(session?.Layout ?? _layout);
+        var activePaneNumber = session?.ActivePaneNumber ?? 1;
+        SetActivePane(_panes[Math.Clamp(activePaneNumber - 1, 0, _panes.Length - 1)]);
+        _initializing = false;
+        Closing += (_, _) =>
+        {
+            _sessionSaveTimer.Stop();
+            SaveSession();
+        };
+        Closed += (_, _) =>
+        {
+            foreach (var pane in _panes)
+                pane.Dispose();
+        };
     }
 
     private void SetActivePane(ExplorerPane selected)
@@ -38,6 +65,7 @@ public partial class MainWindow : Window
         foreach (var pane in _panes)
             pane.SetActive(ReferenceEquals(pane, selected));
         Activity.Text = $"활성 패널: {selected.Number} · {PaneLayoutInfo.GetPaneCount(_layout)}개 패널";
+        ScheduleSessionSave();
     }
 
     private void Layout_Click(object sender, RoutedEventArgs e)
@@ -107,6 +135,35 @@ public partial class MainWindow : Window
         {
             var visibleCount = PaneLayoutInfo.GetPaneCount(layout);
             SetActivePane(_activePane.Number <= visibleCount ? _activePane : _panes[0]);
+        }
+        ScheduleSessionSave();
+    }
+
+    private void ScheduleSessionSave()
+    {
+        if (_initializing)
+            return;
+        _sessionSaveTimer.Stop();
+        _sessionSaveTimer.Start();
+    }
+
+    private void SaveSession()
+    {
+        if (_initializing)
+            return;
+        try
+        {
+            _sessionStore.Save(new WorkspaceSession
+            {
+                Layout = _layout,
+                ActivePaneNumber = _activePane?.Number ?? 1,
+                Panes = _panes.Select(pane => pane.CaptureSession()).ToList()
+            });
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException
+                                   or ArgumentException or NotSupportedException)
+        {
+            Trace.WriteLine($"PaneDock 작업공간 저장 실패: {ex}");
         }
     }
 

@@ -10,9 +10,26 @@ public sealed record ExplorerEntry(
     DateTime ModifiedAt,
     bool IsDirectory,
     bool IsHidden = false,
-    DateTime CreatedAt = default)
+    DateTime CreatedAt = default,
+    bool IsDrive = false)
 {
-    public string Kind => IsDirectory ? "폴더" : string.IsNullOrEmpty(Extension) ? "파일" : Extension.TrimStart('.').ToUpperInvariant() + " 파일";
+    // Lightweight category glyphs: no file reads, Shell calls or bitmap allocations per row.
+    // Native per-file Shell icons can be implemented separately when the icon cache is added.
+    public string IconGlyph => IsDrive ? "💽" : IsDirectory ? "📁" : Extension.ToLowerInvariant() switch
+    {
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp"
+            or ".ico" or ".svg" or ".tif" or ".tiff" => "🖼",
+        ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".tgz" => "🗜",
+        ".mp3" or ".wav" or ".flac" or ".aac" or ".ogg" => "♫",
+        ".mp4" or ".avi" or ".mkv" or ".mov" or ".wmv" => "🎞",
+        ".pdf" => "📕",
+        ".xls" or ".xlsx" or ".csv" => "📊",
+        ".cs" or ".xaml" or ".xml" or ".json" or ".py" or ".js"
+            or ".ts" or ".html" or ".css" or ".ps1" or ".bat" or ".cmd" => "⌘",
+        _ => "📄"
+    };
+
+    public string Kind => IsDrive ? "드라이브" : IsDirectory ? "폴더" : string.IsNullOrEmpty(Extension) ? "파일" : Extension.TrimStart('.').ToUpperInvariant() + " 파일";
 
     public string DisplaySize
     {
@@ -36,6 +53,7 @@ public sealed record ExplorerEntry(
         }
     }
 
-    public string DisplayModifiedAt => ModifiedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
+    public string DisplayModifiedAt => ModifiedAt == DateTime.MinValue
+        ? "—" : ModifiedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
     public string DisplayCreatedAt => CreatedAt == default ? "—" : CreatedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
 }
