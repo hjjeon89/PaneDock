@@ -158,11 +158,9 @@ public partial class MainWindow : Window
     private void OpenSearch()
     {
         var pane = _activePane ?? _panes[0];
-        var root = pane.CurrentPath;
-        if (ExplorerLocations.IsThisPc(root))
-            root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        var search = new SearchWindow(root, GlobalSearchBox.Text) { Owner = this };
+        // Global search defaults to every ready drive, not just the active pane.
+        // The active folder remains available through the search window's button.
+        var search = new SearchWindow(pane.CurrentPath, GlobalSearchBox.Text) { Owner = this };
         search.NavigateRequested += path =>
         {
             pane.NavigateTo(path);

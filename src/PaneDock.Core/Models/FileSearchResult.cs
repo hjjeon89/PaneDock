@@ -11,7 +11,7 @@ public sealed record FileSearchResult(
 
 public sealed record FileSearchProgress(
     IReadOnlyList<FileSearchResult> NewItems, int Matched, int DirectoriesScanned,
-    int SkippedFolders, bool LimitReached);
+    int SkippedFolders, bool LimitReached, string? CurrentFolder = null);
 
 public sealed record FileSearchSummary(
     int Matched, int DirectoriesScanned, int SkippedFolders, bool LimitReached,

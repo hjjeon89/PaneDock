@@ -14,6 +14,7 @@ public partial class SearchWindow : Window
 {
     private readonly FileSearchService _service = new();
     private readonly ObservableCollection<FileSearchResult> _results = [];
+    private readonly string _currentFolder;
     private CancellationTokenSource? _cancellation;
     private bool _closing;
     private int _searchGeneration;
@@ -23,7 +24,11 @@ public partial class SearchWindow : Window
     public SearchWindow(string root, string query)
     {
         InitializeComponent();
-        RootBox.Text = root;
+        _currentFolder = root;
+        // Empty scope means all ready drives (Everything-like scope, without indexing).
+        RootBox.Text = "";
+        CurrentFolderButton.IsEnabled = !ExplorerLocations.IsThisPc(root)
+            && !string.IsNullOrWhiteSpace(root);
         QueryBox.Text = query;
         ResultGrid.ItemsSource = _results;
         Closing += (_, _) =>
@@ -56,12 +61,14 @@ public partial class SearchWindow : Window
             return;
         var query = QueryBox.Text.Trim();
         var root = RootBox.Text.Trim();
-        if (query.Length == 0 || root.Length == 0)
+        if (query.Length == 0)
         {
-            StatusText.Text = "검색어와 폴더 경로를 입력하세요.";
+            StatusText.Text = "찾을 파일명이나 폴더명 검색어를 입력하세요.";
             return;
         }
 
+        var searchAll = root.Length == 0 || string.Equals(root, "내 PC", StringComparison.OrdinalIgnoreCase)
+            || ExplorerLocations.IsThisPc(root);
         var generation = ++_searchGeneration;
         var finished = false;
         using var cancel = new CancellationTokenSource();
@@ -70,19 +77,22 @@ public partial class SearchWindow : Window
         SearchButton.IsEnabled = false;
         CancelButton.IsEnabled = true;
         RootBox.IsEnabled = false;
+        CurrentFolderButton.IsEnabled = false;
         RecursiveBox.IsEnabled = false;
-        StatusText.Text = "파일 검색 중…";
+        StatusText.Text = searchAll ? "PC 전체 드라이브 검색 중… (인덱스 없이 순차 검색)" : "폴더 검색 중…";
         var progress = new Progress<FileSearchProgress>(batch =>
         {
             if (_closing || finished || _searchGeneration != generation) return;
             foreach (var item in batch.NewItems)
                 _results.Add(item);
             StatusText.Text = $"{_results.Count:N0}개 발견 · {batch.DirectoriesScanned:N0}개 폴더 검색 중"
+                + (searchAll ? $" · {Path.GetPathRoot(batch.CurrentFolder ?? "")}" : "")
                 + (batch.SkippedFolders > 0 ? $" · 접근 불가 {batch.SkippedFolders}개 건너뜀" : "");
         });
         try
         {
-            var report = await _service.SearchAsync(root, query,
+            var roots = searchAll ? FileSearchService.GetReadyDriveRoots() : [root];
+            var report = await _service.SearchAsync(roots, query,
                 RecursiveBox.IsChecked == true, progress, cancel.Token);
             if (!_closing && _searchGeneration == generation)
             {
@@ -93,7 +103,8 @@ public partial class SearchWindow : Window
                 _results.Clear();
                 foreach (var item in report.Results)
                     _results.Add(item);
-                StatusText.Text = $"{report.Matched:N0}개 검색됨 · {report.DirectoriesScanned:N0}개 폴더 확인"
+                StatusText.Text = $"{(searchAll ? "PC 전체 검색 완료" : "폴더 검색 완료")} · "
+                    + $"{report.Matched:N0}개 검색됨 · {report.DirectoriesScanned:N0}개 폴더 확인"
                     + (report.SkippedFolders > 0 ? $" · 접근 불가 {report.SkippedFolders:N0}개" : "")
                     + (report.LimitReached ? " · 최대 5,000개 결과 제한" : "");
             }
@@ -116,6 +127,8 @@ public partial class SearchWindow : Window
                 SearchButton.IsEnabled = true;
                 CancelButton.IsEnabled = false;
                 RootBox.IsEnabled = true;
+                CurrentFolderButton.IsEnabled = !ExplorerLocations.IsThisPc(_currentFolder)
+                    && !string.IsNullOrWhiteSpace(_currentFolder);
                 RecursiveBox.IsEnabled = true;
             }
             if (ReferenceEquals(_cancellation, cancel))
@@ -124,6 +137,12 @@ public partial class SearchWindow : Window
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _cancellation?.Cancel();
+
+    private void CurrentFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (CurrentFolderButton.IsEnabled)
+            RootBox.Text = _currentFolder;
+    }
 
     private void Results_DoubleClick(object sender, MouseButtonEventArgs e) => OpenSelected();
     private void OpenResult_Click(object sender, RoutedEventArgs e) => OpenSelected();

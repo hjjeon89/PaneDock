@@ -166,7 +166,10 @@ public partial class ExplorerPane : UserControl
         header.Children.Add(close);
         tab.HeaderLabel = label;
         _changingTab = true;
-        var tabItem = new TabItem { Header = header, Tag = tab };
+        var tabItem = new TabItem { Header = header, Tag = tab, AllowDrop = true };
+        tabItem.PreviewDragEnter += Tab_DragOver;
+        tabItem.PreviewDragOver += Tab_DragOver;
+        tabItem.PreviewDrop += Tab_Drop;
         var context = new ContextMenu();
         var duplicate = new MenuItem { Header = "탭 복제" };
         duplicate.Click += (_, _) =>
@@ -498,7 +501,39 @@ public partial class ExplorerPane : UserControl
         if (e.Key != Key.Enter || SelectedTab is not { } tab)
             return;
         e.Handled = true;
+        if (ExplorerAddressCommand.IsCommandPrompt(Address.Text))
+        {
+            OpenCommandPrompt(tab);
+            return;
+        }
         _ = NavigateAsync(tab, Address.Text, addHistory: true);
+    }
+
+    private void OpenCommandPrompt(ExplorerTab tab)
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var workingDirectory = ExplorerAddressCommand.GetWorkingDirectory(tab.Path, profile);
+        try
+        {
+            if (!Directory.Exists(workingDirectory))
+                workingDirectory = profile;
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = true
+            });
+            EndAddressEdit();
+            Status.Text = $"명령 프롬프트 열기: {workingDirectory}";
+        }
+        catch (Exception ex) when (ex is Win32Exception or IOException
+                                   or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Status.Text = "명령 프롬프트를 시작할 수 없습니다: " + ex.Message;
+            MessageBox.Show(Window.GetWindow(this),
+                "명령 프롬프트를 시작할 수 없습니다.\n\n" + ex.Message,
+                "PaneDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void BeginAddressEdit()

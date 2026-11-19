@@ -32,24 +32,32 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="검색 위치" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <TextBlock Text="검색 위치 (선택)" VerticalAlignment="Center" Margin="0,0,10,0"/>
             <TextBox Grid.Column="1" x:Name="RootBox" Height="29" VerticalContentAlignment="Center"
-                     ToolTip="현재 폴더, C:\, D:\ 또는 네트워크 공유 경로 입력"/>
-            <CheckBox Grid.Column="2" x:Name="RecursiveBox" IsChecked="True"
+                     ToolTip="비우면 전체 PC의 사용 가능한 드라이브에서 검색. 특정 C:\, D:\ 또는 네트워크 공유 경로도 입력 가능"/>
+            <Button Grid.Column="2" x:Name="CurrentFolderButton" Content="현재 폴더"
+                    Margin="8,0,0,0" Padding="10,3" Click="CurrentFolder_Click"
+                    ToolTip="검색 범위를 활성 패널의 현재 폴더로 제한"/>
+            <CheckBox Grid.Column="3" x:Name="RecursiveBox" IsChecked="True"
                       Content="하위 폴더 포함" VerticalAlignment="Center" Margin="14,0,12,0"/>
-            <Button Grid.Column="3" x:Name="CancelButton" Content="중지"
+            <Button Grid.Column="4" x:Name="CancelButton" Content="중지"
                     Click="Cancel_Click" IsEnabled="False" Padding="14,3"/>
         </Grid>
         <DataGrid Grid.Row="2" x:Name="ResultGrid" IsReadOnly="True" AutoGenerateColumns="False"
                   EnableRowVirtualization="True" SelectionMode="Single"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                   Background="{DynamicResource PanelBackground}"
                   Foreground="{DynamicResource TextPrimary}"
                   GridLinesVisibility="None"
                   MouseDoubleClick="Results_DoubleClick">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="이름" Binding="{Binding Name}" Width="2*" MinWidth="110"/>
-                <DataGridTextColumn Header="경로" Binding="{Binding FolderPath}" Width="3*" MinWidth="170"/>
+                <DataGridTextColumn Header="이름" Binding="{Binding Name}" Width="SizeToCells"
+                                    MinWidth="170" MaxWidth="850"/>
+                <DataGridTextColumn Header="경로" Binding="{Binding FolderPath}" Width="SizeToCells"
+                                    MinWidth="250" MaxWidth="1500"/>
                 <DataGridTextColumn Header="유형" Binding="{Binding Type}" Width="65"/>
                 <DataGridTextColumn Header="크기" Binding="{Binding SizeText}" Width="100"/>
                 <DataGridTextColumn Header="수정 날짜" Binding="{Binding ModifiedText}" Width="140"/>
@@ -62,7 +70,7 @@
                 <Button Content="파일 열기" Padding="14,4" Click="OpenResult_Click"
                         ToolTip="Windows 연결 프로그램에서 파일 또는 폴더 열기"/>
             </StackPanel>
-            <TextBlock x:Name="StatusText" Text="검색어와 위치를 지정하세요."
+            <TextBlock x:Name="StatusText" Text="검색어만 입력하면 PC 전체 드라이브에서 검색합니다. 경로를 입력하면 해당 폴더만 검색합니다."
                        VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
         </DockPanel>
     </Grid>

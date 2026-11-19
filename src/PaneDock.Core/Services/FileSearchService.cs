@@ -1,4 +1,5 @@
 ﻿using PaneDock.Core.Models;
+using System.Diagnostics;
 
 namespace PaneDock.Core.Services;
 
@@ -15,33 +16,71 @@ public sealed class FileSearchService
         int maxResults = 5000)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(root);
+        return SearchAsync([root], query, recursive, progress, token, maxResults);
+    }
+
+    /// <summary>All mounted, ready drive roots. A missing search path can use these by default.</summary>
+    public static IReadOnlyList<string> GetReadyDriveRoots()
+    {
+        var roots = new List<string>();
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (drive.IsReady)
+                    roots.Add(drive.RootDirectory.FullName);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An unplugged removable drive must not prevent searching other drives.
+            }
+        }
+        return roots;
+    }
+
+    public Task<FileSearchSummary> SearchAsync(
+        IEnumerable<string> roots, string query, bool recursive,
+        IProgress<FileSearchProgress>? progress, CancellationToken token,
+        int maxResults = 5000)
+    {
+        ArgumentNullException.ThrowIfNull(roots);
         ArgumentException.ThrowIfNullOrWhiteSpace(query);
         if (maxResults is < 1 or > 100000)
             throw new ArgumentOutOfRangeException(nameof(maxResults));
-        return Task.Run(() => Search(root, query.Trim(), recursive, progress, token, maxResults), token);
+        var rootList = roots.Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (rootList.Length == 0)
+            throw new DirectoryNotFoundException("검색 가능한 드라이브나 폴더가 없습니다.");
+        return Task.Run(() => Search(rootList, query.Trim(), recursive, progress, token, maxResults), token);
     }
 
     private static FileSearchSummary Search(
-        string root, string query, bool recursive,
+        IReadOnlyList<string> roots, string query, bool recursive,
         IProgress<FileSearchProgress>? progress, CancellationToken token, int limit)
     {
-        if (!Directory.Exists(root))
-            throw new DirectoryNotFoundException(root);
-
         var stack = new Stack<string>();
-        stack.Push(Path.GetFullPath(root));
+        foreach (var root in roots.Reverse())
+        {
+            if (Directory.Exists(root))
+                stack.Push(root);
+            else if (roots.Count == 1)
+                throw new DirectoryNotFoundException(root);
+        }
         var matches = 0;
         var scanned = 0;
-        var skipped = 0;
+        var skipped = roots.Count - stack.Count;
         var limitReached = false;
         var batch = new List<FileSearchResult>(128);
         var allResults = new List<FileSearchResult>(Math.Min(limit, 5000));
+        var lastReport = Stopwatch.GetTimestamp();
 
-        void Flush()
+        void Flush(string? currentFolder = null)
         {
-            if (batch.Count == 0) return;
-            progress?.Report(new FileSearchProgress(batch.ToArray(), matches, scanned, skipped, limitReached));
+            progress?.Report(new FileSearchProgress(batch.ToArray(), matches, scanned, skipped,
+                limitReached, currentFolder));
             batch.Clear();
+            lastReport = Stopwatch.GetTimestamp();
         }
 
         while (stack.Count > 0)
@@ -83,7 +122,7 @@ public sealed class FileSearchService
                     batch.Add(item);
                     allResults.Add(item);
                     matches++;
-                    if (batch.Count >= 128) Flush();
+                    if (batch.Count >= 128) Flush(current);
                     if (matches >= limit)
                     {
                         limitReached = true;
@@ -95,10 +134,11 @@ public sealed class FileSearchService
             catch (UnauthorizedAccessException) { skipped++; }
 
             if (limitReached) break;
+            if (Stopwatch.GetElapsedTime(lastReport) >= TimeSpan.FromMilliseconds(250))
+                Flush(current);
         }
 
         Flush();
-        progress?.Report(new FileSearchProgress([], matches, scanned, skipped, limitReached));
         return new FileSearchSummary(matches, scanned, skipped, limitReached, allResults);
     }
 }
