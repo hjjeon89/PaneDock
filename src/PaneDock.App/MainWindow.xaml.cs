@@ -123,6 +123,31 @@ public partial class MainWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
+    private void OpenSearch_Click(object sender, RoutedEventArgs e) => OpenSearch();
+
+    private void GlobalSearch_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        OpenSearch();
+    }
+
+    private void OpenSearch()
+    {
+        var pane = _activePane ?? _panes[0];
+        var root = pane.CurrentPath;
+        if (ExplorerLocations.IsThisPc(root))
+            root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        var search = new SearchWindow(root, GlobalSearchBox.Text) { Owner = this };
+        search.NavigateRequested += path =>
+        {
+            pane.NavigateTo(path);
+            search.Close();
+        };
+        search.Show();
+    }
+
     private void ApplyLayout(PaneLayout layout)
     {
         CaptureCurrentLayoutRatios();

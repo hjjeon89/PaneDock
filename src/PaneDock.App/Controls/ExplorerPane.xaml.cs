@@ -29,6 +29,13 @@ public partial class ExplorerPane : UserControl
     public event EventHandler? Activated;
     public event EventHandler? SessionChanged;
     public event Action<ExplorerPane, int>? MoveTabRequested;
+    public string CurrentPath => SelectedTab?.Path ?? ExplorerLocations.ThisPc;
+
+    public void NavigateTo(string path)
+    {
+        if (SelectedTab is { } tab)
+            _ = NavigateAsync(tab, path, addHistory: true);
+    }
 
     public int Number { get; }
 

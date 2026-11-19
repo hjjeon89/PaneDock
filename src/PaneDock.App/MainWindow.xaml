@@ -38,9 +38,15 @@
                        AutomationProperties.Name="PaneDock 프로그램 아이콘"/>
                 <TextBlock Text="PaneDock" FontSize="16" FontWeight="SemiBold"
                            VerticalAlignment="Center" Margin="0,0,20,0"/>
-                <TextBox Width="224" Height="28" VerticalContentAlignment="Center"
-                         Text="전체 검색 (준비 중)" IsEnabled="False"
-                         AutomationProperties.Name="전체 검색"/>
+                <TextBox x:Name="GlobalSearchBox" Width="224" Height="28"
+                         VerticalContentAlignment="Center" ToolTip="활성 폴더에서 파일명 검색 (Enter)"
+                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                         KeyDown="GlobalSearch_KeyDown"
+                         AutomationProperties.Name="파일 검색어"/>
+                <Button Content="⌕" Margin="6,0,0,0" Width="32" Padding="0"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                        ToolTip="파일 검색 열기"
+                        Click="OpenSearch_Click"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True">

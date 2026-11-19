@@ -182,6 +182,51 @@ finally
     Directory.Delete(temp, recursive: true);
 }
 
+// Built-in search is isolated from the user's folders and requires no index or SDK.
+var searchRoot = Path.Combine(Path.GetTempPath(), "PaneDock-search-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(searchRoot);
+try
+{
+    var nested = Directory.CreateDirectory(Path.Combine(searchRoot, "nested"));
+    File.WriteAllText(Path.Combine(searchRoot, "NeedleA.TXT"), "a");
+    File.WriteAllText(Path.Combine(searchRoot, "needleB.txt"), "b");
+    File.WriteAllText(Path.Combine(nested.FullName, "deep-needle.txt"), "deep");
+    File.WriteAllText(Path.Combine(nested.FullName, "other.txt"), "ignore");
+    var results = new List<FileSearchResult>();
+    var reporter = new ImmediateProgress<FileSearchProgress>(
+        progress => results.AddRange(progress.NewItems));
+    var search = new FileSearchService();
+
+    var direct = await search.SearchAsync(searchRoot, "NEEDLE", false, reporter, CancellationToken.None);
+    Assert(direct.Matched == 2 && direct.DirectoriesScanned == 1
+        && !direct.LimitReached, "검색어 대소문자 무시/현재 폴더 검색 실패");
+    Assert(results.Count == 2 && results.All(result => result.FolderPath == searchRoot),
+        "검색 결과의 폴더 경로/배치 보고 오류");
+    results.Clear();
+    var deep = await search.SearchAsync(searchRoot, "needle", true, reporter, CancellationToken.None);
+    Assert(deep.Matched == 3 && deep.DirectoriesScanned == 2,
+        "하위 폴더 검색 실패");
+    Assert(results.Any(result => result.Name == "deep-needle.txt"
+        && result.FolderPath == nested.FullName), "하위 폴더 결과 경로 오류");
+    results.Clear();
+    var limited = await search.SearchAsync(searchRoot, "needle", true, reporter,
+        CancellationToken.None, maxResults: 1);
+    Assert(limited.LimitReached && limited.Matched == 1 && results.Count == 1,
+        "검색 결과 제한 적용 실패");
+    using var searchCanceled = new CancellationTokenSource();
+    searchCanceled.Cancel();
+    var canceled = false;
+    try { await search.SearchAsync(searchRoot, "needle", true, null, searchCanceled.Token); }
+    catch (OperationCanceledException) { canceled = true; }
+    Assert(canceled, "검색 작업 취소 실패");
+    var noMatches = await search.SearchAsync(searchRoot, "not-present", true, null, CancellationToken.None);
+    Assert(noMatches.Matched == 0, "검색 결과 없음 처리 실패");
+}
+finally
+{
+    Directory.Delete(searchRoot, recursive: true);
+}
+
 // File operations are exercised only against a freshly created, isolated temporary folder.
 // No test file from the user workspace is renamed, moved or deleted.
 if (OperatingSystem.IsWindows())
