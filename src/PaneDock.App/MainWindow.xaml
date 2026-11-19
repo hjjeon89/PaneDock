@@ -87,7 +87,8 @@
                 <Button Tag="FourGrid" Content="▦  4" ToolTip="2×2 4분할" Click="Layout_Click"/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                <Button Content="폴더 분석" IsEnabled="False" ToolTip="Phase 5 예정"/>
+                <Button Content="폴더 분석" ToolTip="선택한 폴더의 파일 수와 용량 분석"
+                        Click="FolderAnalysis_Click"/>
                 <Button Content="일괄 변경" IsEnabled="False" ToolTip="Phase 6 예정"/>
             </StackPanel>
         </DockPanel>

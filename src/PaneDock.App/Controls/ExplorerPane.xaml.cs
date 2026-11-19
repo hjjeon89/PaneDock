@@ -31,6 +31,16 @@ public partial class ExplorerPane : UserControl
     public event Action<ExplorerPane, int>? MoveTabRequested;
     public string CurrentPath => SelectedTab?.Path ?? ExplorerLocations.ThisPc;
 
+    public IReadOnlyList<string> GetFoldersForAnalysis()
+    {
+        var selected = Files.SelectedItems.OfType<ExplorerEntry>()
+            .Where(item => item.IsDirectory && !item.IsDrive)
+            .Select(item => item.FullPath).ToArray();
+        if (selected.Length > 0)
+            return selected;
+        return ExplorerLocations.IsThisPc(CurrentPath) ? [] : [CurrentPath];
+    }
+
     public void NavigateTo(string path)
     {
         if (SelectedTab is { } tab)

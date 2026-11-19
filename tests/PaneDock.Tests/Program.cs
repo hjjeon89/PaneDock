@@ -227,6 +227,57 @@ finally
     Directory.Delete(searchRoot, recursive: true);
 }
 
+// Phase 5: selected parent/subfolder combinations must never double-count bytes.
+var analysisRoot = Path.Combine(Path.GetTempPath(), "PaneDock-analyze-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var parent = Directory.CreateDirectory(Path.Combine(analysisRoot, "Parent"));
+    var child = Directory.CreateDirectory(Path.Combine(parent.FullName, "Child"));
+    var other = Directory.CreateDirectory(Path.Combine(analysisRoot, "Other"));
+    File.WriteAllBytes(Path.Combine(parent.FullName, "one.bin"), new byte[3]);
+    File.WriteAllBytes(Path.Combine(child.FullName, "two.bin"), new byte[5]);
+    File.WriteAllBytes(Path.Combine(other.FullName, "three.bin"), new byte[7]);
+
+    var analysis = new FolderAnalysisService();
+    var unique = FolderAnalysisService.DistinctRoots([parent.FullName, child.FullName,
+        parent.FullName, other.FullName]);
+    Assert(unique.Count == 2 && unique.Contains(parent.FullName)
+        && unique.Contains(other.FullName), "다중 폴더 경로 중복/부모-자식 겹침 제거 실패");
+
+    var progressRoots = new List<FolderAnalysisItem>();
+    var progress = new ImmediateProgress<FolderAnalysisProgress>(update =>
+    {
+        if (update.CompletedRoot is { } item) progressRoots.Add(item);
+    });
+    var report = await analysis.AnalyzeAsync(
+        [parent.FullName, child.FullName, parent.FullName, other.FullName],
+        progress, CancellationToken.None);
+    Assert(report.Roots.Count == 2 && report.OverlappingRootsSkipped == 2,
+        "분석 선택 폴더 중복 제거 또는 보고 실패");
+    Assert(report.TotalFiles == 3 && report.TotalBytes == 15
+        && report.TotalSubfolders == 1, "파일 수/총용량/하위 폴더 수 계산 오류");
+    Assert(progressRoots.Count == 2 && progressRoots.Sum(item => item.TotalBytes) == 15,
+        "폴더별 완료 이벤트 및 용량 집계 실패");
+    Assert(FolderAnalysisItem.FormatSize(1024) == "1 KB",
+        "용량 단위 표시 오류");
+
+    using var canceledAnalysis = new CancellationTokenSource();
+    canceledAnalysis.Cancel();
+    var canceledAsExpected = false;
+    try { await analysis.AnalyzeAsync([parent.FullName], null, canceledAnalysis.Token); }
+    catch (OperationCanceledException) { canceledAsExpected = true; }
+    Assert(canceledAsExpected, "폴더 분석 취소가 작동하지 않음");
+    var missing = await analysis.AnalyzeAsync(
+        [Path.Combine(analysisRoot, "missing-folder")], null, CancellationToken.None);
+    Assert(missing.Roots.Count == 1 && missing.Roots[0].Error is not null,
+        "없는 폴더 분석의 오류 보고 실패");
+}
+finally
+{
+    if (Directory.Exists(analysisRoot))
+        Directory.Delete(analysisRoot, recursive: true);
+}
+
 // File operations are exercised only against a freshly created, isolated temporary folder.
 // No test file from the user workspace is renamed, moved or deleted.
 if (OperatingSystem.IsWindows())

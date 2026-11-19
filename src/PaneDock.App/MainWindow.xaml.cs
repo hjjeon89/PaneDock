@@ -125,6 +125,14 @@ public partial class MainWindow : Window
 
     private void OpenSearch_Click(object sender, RoutedEventArgs e) => OpenSearch();
 
+    private void FolderAnalysis_Click(object sender, RoutedEventArgs e)
+    {
+        var pane = _activePane ?? _panes[0];
+        var folders = pane.GetFoldersForAnalysis();
+        var window = new FolderAnalysisWindow(folders) { Owner = this };
+        window.Show();
+    }
+
     private void GlobalSearch_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
