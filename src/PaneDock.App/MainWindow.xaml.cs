@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -15,17 +16,25 @@ public partial class MainWindow : Window
     private readonly ExplorerPane[] _panes;
     private readonly WorkspaceSessionStore _sessionStore = new();
     private readonly DispatcherTimer _sessionSaveTimer;
+    private readonly DispatcherTimer _folderAnalysisTimer;
+    private readonly FolderAnalysisService _folderAnalysis = new();
     private readonly Dictionary<PaneLayout, PaneSplitRatios> _layoutRatios = [];
     private Grid? _columnSplitGrid;
     private Grid? _rowSplitGrid;
     private PaneLayout _layout = PaneLayout.TwoColumns;
     private bool _lightTheme = true;
     private bool _initializing = true;
+    private bool _closing;
     private ExplorerPane? _activePane;
+    private IReadOnlyList<string> _folderAnalysisTargets = [];
+    private string _folderSelectionKey = "";
+    private CancellationTokenSource? _folderAnalysisCancellation;
+    private int _folderAnalysisGeneration;
 
     public MainWindow()
     {
         InitializeComponent();
+        SearchPanel.OwnerWindow = this;
         var session = _sessionStore.Load();
         RestoreWindowPlacement(session?.WindowPlacement);
         if (session is not null)
@@ -43,14 +52,48 @@ public partial class MainWindow : Window
             _sessionSaveTimer.Stop();
             SaveSession();
         };
+        _folderAnalysisTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _folderAnalysisTimer.Tick += async (_, _) =>
+        {
+            _folderAnalysisTimer.Stop();
+            await AnalyzeSelectedFoldersAsync();
+        };
 
         ApplyTheme(session?.IsDarkTheme == true);
         _panes = Enumerable.Range(1, 4)
             .Select(i => new ExplorerPane(i, session?.Panes.ElementAtOrDefault(i - 1))).ToArray();
+        SearchPanel.NavigateRequested += path =>
+        {
+            var pane = _activePane ?? _panes[0];
+            pane.NavigateTo(path);
+            SearchPopup.IsOpen = false;
+        };
+        SearchPanel.FileLocationsChanged += folders =>
+        {
+            foreach (var explorerPane in _panes)
+                explorerPane.RefreshLocations(folders);
+            UpdateFolderSummarySelection(force: true);
+        };
+        SearchPanel.SearchSummaryChanged += summary => SearchDockButton.Content = summary;
+        SearchPanel.CloseRequested += () =>
+        {
+            if (!SearchPanel.IsDeletionRunning)
+                SearchPopup.IsOpen = false;
+        };
+        SearchPanel.DeletionBusyChanged += busy =>
+        {
+            SearchPopup.StaysOpen = busy;
+            SearchDockButton.IsEnabled = !busy;
+        };
         foreach (var pane in _panes)
         {
             pane.Activated += (_, _) => SetActivePane(pane);
             pane.SessionChanged += (_, _) => ScheduleSessionSave();
+            pane.FolderSelectionChanged += (_, _) =>
+            {
+                if (ReferenceEquals(_activePane, pane))
+                    UpdateFolderSummarySelection();
+            };
             pane.MoveTabRequested += (source, target) =>
             {
                 if (target is < 1 or > 4 || source.Number == target)
@@ -73,6 +116,7 @@ public partial class MainWindow : Window
             {
                 foreach (var other in _panes)
                     other.RefreshLocations(folders);
+                UpdateFolderSummarySelection(force: true);
             };
         }
 
@@ -81,10 +125,25 @@ public partial class MainWindow : Window
         SetActivePane(_panes[Math.Clamp(activePaneNumber - 1, 0, _panes.Length - 1)]);
         _initializing = false;
         LocationChanged += (_, _) => ScheduleSessionSave();
-        SizeChanged += (_, _) => ScheduleSessionSave();
-        StateChanged += (_, _) => ScheduleSessionSave();
-        Closing += (_, _) =>
+        SizeChanged += (_, _) =>
         {
+            ScheduleSessionSave();
+            ResizeSearchPopup();
+        };
+        Loaded += (_, _) => ResizeSearchPopup();
+        StateChanged += (_, _) => ScheduleSessionSave();
+        Closing += (_, args) =>
+        {
+            if (SearchPanel.IsDeletionRunning)
+            {
+                args.Cancel = true;
+                return;
+            }
+            _closing = true;
+            SearchPanel.Shutdown();
+            _folderAnalysisTimer.Stop();
+            _folderAnalysisGeneration++;
+            _folderAnalysisCancellation?.Cancel();
             _sessionSaveTimer.Stop();
             SaveSession();
         };
@@ -101,8 +160,119 @@ public partial class MainWindow : Window
         foreach (var pane in _panes)
             pane.SetActive(ReferenceEquals(pane, selected));
         Activity.Text = $"활성 패널: {selected.Number} · {PaneLayoutInfo.GetPaneCount(_layout)}개 패널";
+        UpdateFolderSummarySelection();
         ScheduleSessionSave();
     }
+
+    private void UpdateFolderSummarySelection(bool force = false)
+    {
+        if (_closing || _activePane is null)
+            return;
+
+        var (files, folders) = _activePane.GetSelectionCounts();
+        SelectedItemsSummary.Text = files + folders == 0
+            ? "선택 항목 없음"
+            : $"선택: 파일 {files:N0} · 폴더 {folders:N0}";
+
+        var selected = _activePane.GetFoldersForAnalysis()
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var key = _activePane.Number + "|" + string.Join("|",
+            selected.OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
+        if (!force && string.Equals(key, _folderSelectionKey, StringComparison.Ordinal))
+            return;
+
+        _folderSelectionKey = key;
+        _folderAnalysisTargets = selected;
+        _folderAnalysisTimer.Stop();
+        _folderAnalysisGeneration++;
+        _folderAnalysisCancellation?.Cancel();
+        FolderBreakdownGrid.ItemsSource = null;
+
+        if (selected.Length == 0)
+        {
+            FolderSummaryButton.IsEnabled = false;
+            FolderSummaryButton.Content = "📁 폴더를 선택하면 파일 수·용량 계산";
+            FolderBreakdownStatus.Text = "분석할 폴더를 선택하세요.";
+            FolderBreakdownPopup.IsOpen = false;
+            return;
+        }
+
+        FolderSummaryButton.IsEnabled = true;
+        FolderSummaryButton.Content = $"📁 {selected.Length:N0}개 폴더 · 계산 대기…";
+        FolderBreakdownStatus.Text = $"{selected.Length:N0}개 폴더 분석을 준비 중입니다.";
+        _folderAnalysisTimer.Start();
+    }
+
+    private async Task AnalyzeSelectedFoldersAsync()
+    {
+        if (_closing || _folderAnalysisTargets.Count == 0)
+            return;
+
+        var generation = _folderAnalysisGeneration;
+        var selected = _folderAnalysisTargets.ToArray();
+        var cancellation = new CancellationTokenSource();
+        _folderAnalysisCancellation = cancellation;
+        var finished = false;
+        var progress = new Progress<FolderAnalysisProgress>(update =>
+        {
+            if (_closing || finished || generation != _folderAnalysisGeneration)
+                return;
+            FolderSummaryButton.Content = $"📁 {selected.Length:N0}개 폴더 · 계산 중…";
+            FolderBreakdownStatus.Text = $"분석 중: {update.CurrentFolder} · "
+                + $"파일 {update.Files:N0}개 · {FolderAnalysisItem.FormatSize(update.Bytes)}";
+        });
+
+        try
+        {
+            var report = await _folderAnalysis.AnalyzeAsync(selected, progress, cancellation.Token);
+            if (_closing || generation != _folderAnalysisGeneration)
+                return;
+            finished = true;
+
+            FolderBreakdownGrid.ItemsSource = report.Roots;
+            FolderSummaryButton.Content = $"📁 {report.Roots.Count:N0}개 · "
+                + $"파일 {report.TotalFiles:N0} · 하위 폴더 {report.TotalSubfolders:N0} · "
+                + FolderAnalysisItem.FormatSize(report.TotalBytes);
+            FolderBreakdownStatus.Text = $"합계: 파일 {report.TotalFiles:N0}개, "
+                + $"하위 폴더 {report.TotalSubfolders:N0}개, "
+                + $"총용량 {FolderAnalysisItem.FormatSize(report.TotalBytes)}"
+                + (report.OverlappingRootsSkipped > 0
+                    ? $" · 중첩 선택 {report.OverlappingRootsSkipped}개 제외" : "")
+                + (report.SkippedFolders > 0
+                    ? $" · 접근 불가/링크 {report.SkippedFolders}개 건너뜀" : "");
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_closing && generation == _folderAnalysisGeneration)
+                FolderBreakdownStatus.Text = "폴더 분석이 취소됐습니다.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or ArgumentException or NotSupportedException)
+        {
+            if (!_closing && generation == _folderAnalysisGeneration)
+            {
+                FolderSummaryButton.Content = "📁 폴더 분석 실패 · 클릭해 확인";
+                FolderBreakdownStatus.Text = "분석 실패: " + ex.Message;
+            }
+        }
+        finally
+        {
+            finished = true;
+            if (ReferenceEquals(_folderAnalysisCancellation, cancellation))
+                _folderAnalysisCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private void FolderSummary_Click(object sender, RoutedEventArgs e)
+    {
+        if (SearchPanel.IsDeletionRunning) return;
+        SearchPopup.IsOpen = false;
+        FolderBreakdownPopup.IsOpen = !FolderBreakdownPopup.IsOpen;
+    }
+
+    private void FolderSummaryRefresh_Click(object sender, RoutedEventArgs e) =>
+        UpdateFolderSummarySelection(force: true);
 
     private void Layout_Click(object sender, RoutedEventArgs e)
     {
@@ -123,15 +293,7 @@ public partial class MainWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
-    private void OpenSearch_Click(object sender, RoutedEventArgs e) => OpenSearch();
-
-    private void FolderAnalysis_Click(object sender, RoutedEventArgs e)
-    {
-        var pane = _activePane ?? _panes[0];
-        var folders = pane.GetFoldersForAnalysis();
-        var window = new FolderAnalysisWindow(folders) { Owner = this };
-        window.Show();
-    }
+    private void OpenSearch_Click(object sender, RoutedEventArgs e) => OpenSearch(resetScope: true);
 
     private void BatchRename_Click(object sender, RoutedEventArgs e)
     {
@@ -152,21 +314,47 @@ public partial class MainWindow : Window
     {
         if (e.Key != Key.Enter) return;
         e.Handled = true;
-        OpenSearch();
+        OpenSearch(resetScope: true);
     }
 
-    private void OpenSearch()
+    private void OpenSearch(bool resetScope)
     {
+        if (SearchPanel.IsDeletionRunning || _closing) return;
         var pane = _activePane ?? _panes[0];
-        // Global search defaults to every ready drive, not just the active pane.
-        // The active folder remains available through the search window's button.
-        var search = new SearchWindow(pane.CurrentPath, GlobalSearchBox.Text) { Owner = this };
-        search.NavigateRequested += path =>
+        SearchPanel.PrepareOpen(pane.CurrentPath,
+            resetScope ? GlobalSearchBox.Text : "", resetScope);
+        FolderBreakdownPopup.IsOpen = false;
+        ResizeSearchPopup();
+        SearchPopup.IsOpen = true;
+    }
+
+    private void SearchDock_Click(object sender, RoutedEventArgs e)
+    {
+        if (SearchPopup.IsOpen)
+            SearchPopup.IsOpen = false;
+        else
+            OpenSearch(resetScope: false);
+    }
+
+    private async void SearchPopup_Opened(object sender, EventArgs e) =>
+        await SearchPanel.ActivateAsync();
+
+    private void SearchPopup_Closed(object sender, EventArgs e)
+    {
+        if (SearchPanel.IsDeletionRunning)
         {
-            pane.NavigateTo(path);
-            search.Close();
-        };
-        search.Show();
+            // Keep the deletion result and partial-failure diagnostics visible.
+            _ = Dispatcher.BeginInvoke(() => SearchPopup.IsOpen = true);
+            return;
+        }
+        SearchPanel.Deactivate();
+    }
+
+    private void ResizeSearchPopup()
+    {
+        // Keep the popup inside even the narrowest supported 760px window.
+        SearchPanel.Width = Math.Min(1060, Math.Max(640, ActualWidth - 52));
+        SearchPanel.Height = Math.Min(535, Math.Max(320, ActualHeight - 175));
     }
 
     private void ApplyLayout(PaneLayout layout)

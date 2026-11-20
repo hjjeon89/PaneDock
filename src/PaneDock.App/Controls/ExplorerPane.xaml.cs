@@ -28,17 +28,22 @@ public partial class ExplorerPane : UserControl
 
     public event EventHandler? Activated;
     public event EventHandler? SessionChanged;
+    public event EventHandler? FolderSelectionChanged;
     public event Action<ExplorerPane, int>? MoveTabRequested;
     public string CurrentPath => SelectedTab?.Path ?? ExplorerLocations.ThisPc;
 
-    public IReadOnlyList<string> GetFoldersForAnalysis()
-    {
-        var selected = Files.SelectedItems.OfType<ExplorerEntry>()
+    // Analyze explicitly selected folders only. Scanning an entire drive
+    // automatically when no item is selected would be costly and surprising.
+    public IReadOnlyList<string> GetFoldersForAnalysis() =>
+        Files.SelectedItems.OfType<ExplorerEntry>()
             .Where(item => item.IsDirectory)
             .Select(item => item.FullPath).ToArray();
-        if (selected.Length > 0)
-            return selected;
-        return ExplorerLocations.IsThisPc(CurrentPath) ? [] : [CurrentPath];
+
+    public (int Files, int Folders) GetSelectionCounts()
+    {
+        var entries = Files.SelectedItems.OfType<ExplorerEntry>().ToArray();
+        return (entries.Count(item => !item.IsDirectory),
+            entries.Count(item => item.IsDirectory));
     }
 
     public IReadOnlyList<string> GetSelectedFilesForBatchRename() =>
@@ -692,7 +697,10 @@ public partial class ExplorerPane : UserControl
     private void Files_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_changingTab && !_applyingSnapshot)
+        {
             UpdateStatus();
+            FolderSelectionChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private void Pane_PreviewKeyDown(object sender, KeyEventArgs e)
