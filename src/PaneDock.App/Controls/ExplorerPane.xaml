@@ -1,9 +1,13 @@
 <UserControl x:Class="PaneDock.App.Controls.ExplorerPane"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:PaneDock.App.Controls"
              MinWidth="215" MinHeight="175"
              PreviewKeyDown="Pane_PreviewKeyDown"
              GotKeyboardFocus="Activate_OnFocus">
+    <UserControl.Resources>
+        <local:ShellIconConverter x:Key="ShellIconConverter"/>
+    </UserControl.Resources>
     <Border x:Name="OuterBorder" BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="1" CornerRadius="8"
             AllowDrop="True" DragOver="Pane_DragOver" Drop="Pane_Drop"
@@ -155,6 +159,7 @@
                 <DataGrid.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="새 폴더" Tag="NewFolder" InputGestureText="Ctrl+Shift+N" Click="FileCommand_Click"/>
+                        <MenuItem Header="새 파일" Tag="NewFile" InputGestureText="Ctrl+Alt+N" Click="FileCommand_Click"/>
                         <MenuItem Header="이름 변경" Tag="Rename" InputGestureText="F2" Click="FileCommand_Click"/>
                         <Separator/>
                         <MenuItem Header="잘라내기" Tag="Cut" InputGestureText="Ctrl+X" Click="FileCommand_Click"/>
@@ -190,8 +195,25 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding IconGlyph}" FontFamily="Segoe UI Emoji"
-                                               FontSize="14" Margin="2,0,7,0" VerticalAlignment="Center"/>
+                                    <Grid Width="20" Height="20" Margin="2,0,7,0"
+                                          VerticalAlignment="Center">
+                                        <Image x:Name="NativeFileIcon" Width="16" Height="16"
+                                               Source="{Binding Converter={StaticResource ShellIconConverter}}"/>
+                                        <TextBlock Text="{Binding IconGlyph}" FontFamily="Segoe UI Emoji"
+                                                   FontSize="14" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Source, ElementName=NativeFileIcon}"
+                                                                     Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
                                     <TextBlock Text="{Binding Name}" ToolTip="{Binding Name}"
                                                VerticalAlignment="Center"/>
                                 </StackPanel>

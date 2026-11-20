@@ -39,7 +39,7 @@ public partial class ExplorerPane
 
         return command switch
         {
-            FileCommand.NewFolder or FileCommand.Paste => true,
+            FileCommand.NewFolder or FileCommand.NewFile or FileCommand.Paste => true,
             FileCommand.Rename => Files.SelectedItems.Count == 1,
             _ => Files.SelectedItems.Count > 0
         };
@@ -76,6 +76,7 @@ public partial class ExplorerPane
         FileCommand? command = (Keyboard.Modifiers, key) switch
         {
             (ModifierKeys.Control | ModifierKeys.Shift, Key.N) => FileCommand.NewFolder,
+            (ModifierKeys.Control | ModifierKeys.Alt, Key.N) => FileCommand.NewFile,
             (ModifierKeys.None, Key.F2) => FileCommand.Rename,
             (ModifierKeys.Control, Key.X) => FileCommand.Cut,
             (ModifierKeys.Control, Key.C) => FileCommand.Copy,
@@ -146,10 +147,10 @@ public partial class ExplorerPane
                 if (beforeRead == GetClipboardSequenceNumber())
                     clipboardSequence = beforeRead;
             }
-            else if (command is FileCommand.NewFolder or FileCommand.Rename)
+            else if (command is FileCommand.NewFolder or FileCommand.NewFile or FileCommand.Rename)
             {
                 var originalName = command == FileCommand.Rename ? selected[0].Name : null;
-                name = AskForName(owner, originalName);
+                name = AskForName(owner, originalName, command == FileCommand.NewFile);
                 if (name is null || name == originalName)
                     return;
                 var newPath = Path.Combine(folder, name);
@@ -162,6 +163,14 @@ public partial class ExplorerPane
                         + newPath, "이름 충돌", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
+            }
+
+            if (command == FileCommand.NewFile)
+            {
+                var created = await new NewFileService().CreateEmptyAsync(folder, name!);
+                Status.Text = "새 파일 생성: " + Path.GetFileName(created);
+                FileLocationsChanged?.Invoke([folder]);
+                return;
             }
 
             if (command is FileCommand.Copy or FileCommand.Cut)
@@ -242,10 +251,10 @@ public partial class ExplorerPane
             MessageBoxResult.No) == MessageBoxResult.Yes;
     }
 
-    private static string? AskForName(Window owner, string? originalName)
+    private static string? AskForName(Window owner, string? originalName, bool newFile = false)
     {
-        var title = originalName is null ? "새 폴더" : "이름 변경";
-        var input = new TextBox { Text = originalName ?? "새 폴더" };
+        var title = newFile ? "새 파일 만들기" : originalName is null ? "새 폴더" : "이름 변경";
+        var input = new TextBox { Text = originalName ?? (newFile ? "새 텍스트 문서.txt" : "새 폴더") };
         AutomationProperties.SetName(input, "이름");
         var error = new TextBlock { Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap };
         var confirm = new Button { Content = "확인", IsDefault = true, MinWidth = 70 };

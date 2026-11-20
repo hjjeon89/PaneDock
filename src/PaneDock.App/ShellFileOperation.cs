@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace PaneDock.App;
 
-internal enum FileCommand { NewFolder, Rename, Cut, Copy, Paste, Delete }
+internal enum FileCommand { NewFolder, NewFile, Rename, Cut, Copy, Paste, Delete }
 
 internal static class ShellFileOperation
 {

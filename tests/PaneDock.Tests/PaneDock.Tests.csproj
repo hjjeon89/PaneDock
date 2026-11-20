@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsTestProject>true</IsTestProject>
@@ -14,5 +15,8 @@
              Link="Everything64.dll" CopyToOutputDirectory="PreserveNewest" />
     <!-- Verify the actual Shell implementation without adding a WPF dependency to Core. -->
     <Compile Include="..\..\src\PaneDock.App\ShellFileOperation.cs" Link="ShellFileOperation.cs" />
+    <Compile Include="..\..\src\PaneDock.App\Controls\ShellIconConverter.cs"
+             Link="ShellIconConverter.cs" />
+    <Using Include="System.IO" />
   </ItemGroup>
 </Project>
