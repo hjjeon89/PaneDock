@@ -14,7 +14,7 @@ using PaneDock.Core.Services;
 namespace PaneDock.App;
 
 /// <summary>
-/// Embedded search surface hosted by the main window's bottom Popup.
+/// Embedded search surface hosted by the main window's title-bar search Popup.
 /// Its search state survives opening/closing the popup.
 /// </summary>
 public partial class SearchPanel : UserControl
@@ -37,7 +37,6 @@ public partial class SearchPanel : UserControl
 
     public event Action<string>? NavigateRequested;
     public event Action<string[]>? FileLocationsChanged;
-    public event Action<string>? SearchSummaryChanged;
     public event Action<bool>? DeletionBusyChanged;
     public event Action? CloseRequested;
 
@@ -57,36 +56,28 @@ public partial class SearchPanel : UserControl
         };
     }
 
-    public void PrepareOpen(string currentFolder, string query, bool resetScope)
+    public void PrepareOpen(string currentFolder, string query)
     {
         _currentFolder = currentFolder;
-        // The title-bar search always means global Everything search.
-        // The footer control reopens the last user-selected search scope.
-        if (resetScope)
-        {
-            RootBox.Text = "";
-            DirectScanBox.IsChecked = false;
-            RecursiveBox.IsChecked = true;
-        }
+        // Starting from the title bar defaults to a full-PC indexed search.
+        RootBox.Text = "";
+        DirectScanBox.IsChecked = false;
+        RecursiveBox.IsChecked = true;
         CurrentFolderButton.IsEnabled = !ExplorerLocations.IsThisPc(currentFolder)
             && !string.IsNullOrWhiteSpace(currentFolder);
-        if (!string.IsNullOrWhiteSpace(query))
-            QueryBox.Text = query;
+        SetQuery(query);
     }
+
+    public void SetQuery(string query) => QueryBox.Text = query;
+
+    public Task SearchNowAsync() => StartSearchAsync();
 
     public async Task ActivateAsync()
     {
         if (_closing) return;
         _active = true;
         var activation = ++_activationGeneration;
-        _ = Dispatcher.BeginInvoke(() =>
-        {
-            if (_active && activation == _activationGeneration)
-            {
-                QueryBox.Focus();
-                QueryBox.SelectAll();
-            }
-        }, DispatcherPriority.Input);
+        // Keep keyboard focus in the visible title-bar search field.
         StatusText.Text = "Everything 인덱스 연결 확인 중…";
         _indexReady = false;
         if (_indexed.IsAvailable)
@@ -107,7 +98,7 @@ public partial class SearchPanel : UserControl
             ? "Everything 인덱스 연결됨 · 입력 후 약 230ms에 자동 검색"
             : "Everything 연결 불가 · 검색 버튼으로 직접 검색하세요.";
         // Direct filesystem scans must remain explicitly user-initiated:
-        // reopening the footer must never silently traverse the whole C: drive.
+        // opening a popup must never silently traverse the whole C: drive.
         if (!string.IsNullOrWhiteSpace(QueryBox.Text)
             && _indexReady && DirectScanBox.IsChecked != true)
             await StartSearchAsync(automatic: true);
@@ -169,7 +160,6 @@ public partial class SearchPanel : UserControl
             ResultGrid.ItemsSource = _results;
             _results.Clear();
             StatusText.Text = "찾을 파일명이나 폴더명 검색어를 입력하세요.";
-            SearchSummaryChanged?.Invoke("⌕ 전체 파일 검색");
             return;
         }
 
@@ -262,7 +252,6 @@ public partial class SearchPanel : UserControl
                 // Swap once rather than thousands of individual WPF notifications.
                 ResultGrid.ItemsSource = report.Results;
                 UpdateSelectionState();
-                SearchSummaryChanged?.Invoke($"⌕ 검색 결과 {report.Matched:N0}개");
                 clock.Stop();
                 if (wasIndexed)
                     StatusText.Text = $"Everything 인덱스 · {report.Matched:N0}개 표시"
@@ -453,7 +442,6 @@ public partial class SearchPanel : UserControl
             DeletionBusyChanged?.Invoke(false);
             SetDeleteBusy(false);
             UpdateSelectionState();
-            SearchSummaryChanged?.Invoke($"⌕ 검색 결과 {CurrentResults().Count():N0}개");
 
             var remaining = existing.Length - gone.Length;
             StatusText.Text = gone.Length == existing.Length && completed

@@ -22,7 +22,8 @@
             <TextBlock Text="⌕  전체 파일 검색" FontSize="14" FontWeight="SemiBold"
                        VerticalAlignment="Center"/>
         </DockPanel>
-        <Grid Grid.Row="1">
+        <!-- The title-bar search box is the single search input. -->
+        <Grid Grid.Row="1" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>

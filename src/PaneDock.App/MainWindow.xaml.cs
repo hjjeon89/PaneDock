@@ -102,7 +102,6 @@ public partial class MainWindow : Window
                 explorerPane.RefreshLocations(folders);
             UpdateFolderSummarySelection(force: true);
         };
-        SearchPanel.SearchSummaryChanged += summary => SearchDockButton.Content = summary;
         SearchPanel.CloseRequested += () =>
         {
             if (!SearchPanel.IsDeletionRunning)
@@ -111,7 +110,8 @@ public partial class MainWindow : Window
         SearchPanel.DeletionBusyChanged += busy =>
         {
             SearchPopup.StaysOpen = busy;
-            SearchDockButton.IsEnabled = !busy;
+            GlobalSearchBox.IsEnabled = !busy;
+            GlobalSearchButton.IsEnabled = !busy;
         };
         foreach (var pane in _panes)
         {
@@ -326,7 +326,13 @@ public partial class MainWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
-    private void OpenSearch_Click(object sender, RoutedEventArgs e) => OpenSearch(resetScope: true);
+    private void OpenSearch_Click(object sender, RoutedEventArgs e)
+    {
+        if (SearchPopup.IsOpen)
+            _ = SearchPanel.SearchNowAsync();
+        else
+            OpenSearch();
+    }
 
     private void BatchRename_Click(object sender, RoutedEventArgs e)
     {
@@ -345,28 +351,49 @@ public partial class MainWindow : Window
 
     private void GlobalSearch_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter) return;
-        e.Handled = true;
-        OpenSearch(resetScope: true);
+        if (e.Key == Key.Escape && SearchPopup.IsOpen && !SearchPanel.IsDeletionRunning)
+        {
+            e.Handled = true;
+            SearchPopup.IsOpen = false;
+        }
+        else if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            if (SearchPopup.IsOpen)
+                _ = SearchPanel.SearchNowAsync();
+            else
+                OpenSearch();
+        }
     }
 
-    private void OpenSearch(bool resetScope)
+    private void GlobalSearch_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!IsLoaded || _closing || SearchPanel.IsDeletionRunning) return;
+        if (SearchPopup.IsOpen)
+            SearchPanel.SetQuery(GlobalSearchBox.Text);
+        else if (!string.IsNullOrWhiteSpace(GlobalSearchBox.Text))
+        {
+            // Opening a StaysOpen=False popup inside the TextChanged input
+            // event can be dismissed by that same routed input. Defer it.
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (!_closing && !SearchPanel.IsDeletionRunning
+                    && !SearchPopup.IsOpen
+                    && !string.IsNullOrWhiteSpace(GlobalSearchBox.Text))
+                    OpenSearch();
+            }, DispatcherPriority.Background);
+        }
+    }
+
+    private void OpenSearch()
     {
         if (SearchPanel.IsDeletionRunning || _closing) return;
         var pane = _activePane ?? _panes[0];
-        SearchPanel.PrepareOpen(pane.CurrentPath,
-            resetScope ? GlobalSearchBox.Text : "", resetScope);
+        SearchPanel.PrepareOpen(pane.CurrentPath, GlobalSearchBox.Text);
         FolderBreakdownPopup.IsOpen = false;
         ResizeSearchPopup();
         SearchPopup.IsOpen = true;
-    }
-
-    private void SearchDock_Click(object sender, RoutedEventArgs e)
-    {
-        if (SearchPopup.IsOpen)
-            SearchPopup.IsOpen = false;
-        else
-            OpenSearch(resetScope: false);
+        GlobalSearchBox.Focus();
     }
 
     private async void SearchPopup_Opened(object sender, EventArgs e) =>
@@ -385,9 +412,15 @@ public partial class MainWindow : Window
 
     private void ResizeSearchPopup()
     {
-        // Keep the popup inside even the narrowest supported 760px window.
-        SearchPanel.Width = Math.Min(1060, Math.Max(640, ActualWidth - 52));
-        SearchPanel.Height = Math.Min(535, Math.Max(320, ActualHeight - 175));
+        // Anchor below the title-bar search box. For a narrow window, shift
+        // the wide results popup left rather than letting it go off-screen.
+        var width = Math.Min(960, Math.Max(620, ActualWidth - 44));
+        SearchPanel.Width = width;
+        SearchPanel.Height = Math.Min(535, Math.Max(300, ActualHeight - 110));
+        if (!GlobalSearchBox.IsLoaded) return;
+        var inputLeft = GlobalSearchBox.TranslatePoint(new Point(0, 0), this).X;
+        var popupLeft = Math.Clamp(inputLeft, 16, Math.Max(16, ActualWidth - width - 16));
+        SearchPopup.HorizontalOffset = popupLeft - inputLeft;
     }
 
     private void ApplyLayout(PaneLayout layout)

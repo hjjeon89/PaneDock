@@ -40,14 +40,15 @@
                 <TextBlock Text="PaneDock" FontSize="16" FontWeight="SemiBold"
                            VerticalAlignment="Center" Margin="0,0,20,0"/>
                 <TextBox x:Name="GlobalSearchBox" Width="224" Height="28"
-                         VerticalContentAlignment="Center" ToolTip="PC 전체 Everything 파일 검색 팝업 (Enter)"
+                         VerticalContentAlignment="Center" ToolTip="파일명 입력 시 아래에 전체 검색 결과 표시 · Enter: 검색 · Esc: 닫기"
                          shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                         TextChanged="GlobalSearch_TextChanged"
                          KeyDown="GlobalSearch_KeyDown"
                          AutomationProperties.Name="파일 검색어"/>
-                <Button Content="⌕" Margin="6,0,0,0" Width="32" Padding="0"
-                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        ToolTip="파일 검색 열기"
-                        Click="OpenSearch_Click"/>
+                <Button x:Name="GlobalSearchButton" Content="⌕" Margin="6,0,0,0" Width="32" Padding="0"
+                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                         ToolTip="상단 검색 결과 표시 · 검색 실행"
+                         Click="OpenSearch_Click"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True">
@@ -93,15 +94,9 @@
             </StackPanel>
         </DockPanel>
         <Grid Grid.Row="2" x:Name="PaneHost" Margin="0,4,0,8"/>
-        <!-- Full-width anchor keeps the search popup INSIDE the application
-             instead of extending past a narrow window's right edge. -->
-        <Border x:Name="SearchPopupAnchor" Grid.Row="3" Height="1"
-                VerticalAlignment="Top" HorizontalAlignment="Stretch"
-                IsHitTestVisible="False"/>
         <Grid Grid.Row="3" VerticalAlignment="Center">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
@@ -111,13 +106,7 @@
             <TextBlock x:Name="SelectedItemsSummary" Grid.Column="1"
                        Text="선택 항목 없음" VerticalAlignment="Center"
                        Margin="12,0,14,0" Foreground="{DynamicResource TextSecondary}"/>
-            <Button x:Name="SearchDockButton" Grid.Column="2"
-                    Content="⌕ 전체 파일 검색" Height="30" Padding="12,3"
-                    Margin="0,0,8,0"
-                    AutomationProperties.Name="하단 파일 검색"
-                    ToolTip="클릭하면 메인 화면 안에서 Everything 파일 검색 열기"
-                    Click="SearchDock_Click"/>
-            <Button x:Name="FolderSummaryButton" Grid.Column="3"
+            <Button x:Name="FolderSummaryButton" Grid.Column="2"
                     Content="📁 폴더를 선택하면 파일 수·용량 계산"
                     Height="30" Padding="12,3" IsEnabled="False"
                     AutomationProperties.Name="하단 폴더 분석"
@@ -169,9 +158,9 @@
                 </Grid>
             </Border>
         </Popup>
-        <Popup x:Name="SearchPopup" Placement="Top" StaysOpen="False"
-               AllowsTransparency="True" VerticalOffset="-5"
-               PlacementTarget="{Binding ElementName=SearchPopupAnchor}"
+        <Popup x:Name="SearchPopup" Placement="Bottom" StaysOpen="False"
+               AllowsTransparency="True" VerticalOffset="5"
+               PlacementTarget="{Binding ElementName=GlobalSearchBox}"
                Opened="SearchPopup_Opened" Closed="SearchPopup_Closed">
             <local:SearchPanel x:Name="SearchPanel"/>
         </Popup>
