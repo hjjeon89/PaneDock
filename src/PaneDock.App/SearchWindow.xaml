@@ -22,7 +22,8 @@
             <TextBlock Text="검색어" VerticalAlignment="Center" Margin="0,0,10,0" FontWeight="SemiBold"/>
             <TextBox Grid.Column="1" x:Name="QueryBox" Height="32"
                      VerticalContentAlignment="Center" KeyDown="Query_KeyDown"
-                     ToolTip="이름에 포함된 단어 검색 (대소문자 구분 없음)"/>
+                     TextChanged="SearchInputs_Changed"
+                     ToolTip="Everything 검색 문법 지원: *.pdf, 이름1 이름2, 파일명 일부 입력"/>
             <Button Grid.Column="2" x:Name="SearchButton" Content="⌕ 검색"
                     Margin="8,0,0,0" Padding="18,4" Click="Search_Click"/>
         </Grid>
@@ -33,16 +34,23 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Text="검색 위치 (선택)" VerticalAlignment="Center" Margin="0,0,10,0"/>
             <TextBox Grid.Column="1" x:Name="RootBox" Height="29" VerticalContentAlignment="Center"
+                     TextChanged="SearchInputs_Changed"
                      ToolTip="비우면 전체 PC의 사용 가능한 드라이브에서 검색. 특정 C:\, D:\ 또는 네트워크 공유 경로도 입력 가능"/>
             <Button Grid.Column="2" x:Name="CurrentFolderButton" Content="현재 폴더"
                     Margin="8,0,0,0" Padding="10,3" Click="CurrentFolder_Click"
                     ToolTip="검색 범위를 활성 패널의 현재 폴더로 제한"/>
             <CheckBox Grid.Column="3" x:Name="RecursiveBox" IsChecked="True"
-                      Content="하위 폴더 포함" VerticalAlignment="Center" Margin="14,0,12,0"/>
-            <Button Grid.Column="4" x:Name="CancelButton" Content="중지"
+                      Content="하위 폴더 포함" VerticalAlignment="Center" Margin="10,0,8,0"
+                      Checked="SearchScope_Changed" Unchecked="SearchScope_Changed"/>
+            <CheckBox Grid.Column="4" x:Name="DirectScanBox"
+                      Content="직접 검색" VerticalAlignment="Center" Margin="0,0,8,0"
+                      Checked="SearchScope_Changed" Unchecked="SearchScope_Changed"
+                      ToolTip="Everything 인덱스에 포함되지 않은 폴더 또는 네트워크 경로를 실제로 순회하며 검색"/>
+            <Button Grid.Column="5" x:Name="CancelButton" Content="중지"
                     Click="Cancel_Click" IsEnabled="False" Padding="14,3"/>
         </Grid>
         <DataGrid Grid.Row="2" x:Name="ResultGrid" IsReadOnly="True" AutoGenerateColumns="False"

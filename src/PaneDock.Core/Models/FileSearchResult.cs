@@ -15,4 +15,4 @@ public sealed record FileSearchProgress(
 
 public sealed record FileSearchSummary(
     int Matched, int DirectoriesScanned, int SkippedFolders, bool LimitReached,
-    IReadOnlyList<FileSearchResult> Results);
+    IReadOnlyList<FileSearchResult> Results, int? TotalMatches = null);

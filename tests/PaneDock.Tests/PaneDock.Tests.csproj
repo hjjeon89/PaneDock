@@ -10,6 +10,8 @@
     <PackageReference Include="MSTest.TestAdapter" Version="3.6.4" />
     <PackageReference Include="MSTest.TestFramework" Version="3.6.4" />
     <ProjectReference Include="..\..\src\PaneDock.Core\PaneDock.Core.csproj" />
+    <Content Include="..\..\src\PaneDock.App\Native\Everything64.dll"
+             Link="Everything64.dll" CopyToOutputDirectory="PreserveNewest" />
     <!-- Verify the actual Shell implementation without adding a WPF dependency to Core. -->
     <Compile Include="..\..\src\PaneDock.App\ShellFileOperation.cs" Link="ShellFileOperation.cs" />
   </ItemGroup>

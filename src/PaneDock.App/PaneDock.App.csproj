@@ -13,5 +13,9 @@
     <ProjectReference Include="..\PaneDock.Core\PaneDock.Core.csproj" />
     <Resource Include="Assets\PaneDock.ico" />
     <Resource Include="Assets\PaneDock.png" />
+    <Content Include="Native\Everything64.dll" Link="Everything64.dll"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="Native\Everything.LICENSE.txt" Link="Everything.LICENSE.txt"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
   </ItemGroup>
 </Project>
