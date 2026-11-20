@@ -257,8 +257,8 @@ public partial class MainWindow : Window
 
         try
         {
-            var report = await _folderAnalysis.AnalyzeAsync(selected, progress, cancellation.Token);
-            if (_closing || generation != _folderAnalysisGeneration)
+            var report = await _folderAnalysis.AnalyzeForUiAsync(selected, progress, cancellation.Token);
+            if (report is null || _closing || generation != _folderAnalysisGeneration)
                 return;
             finished = true;
 

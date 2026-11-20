@@ -225,9 +225,17 @@ public partial class SearchPanel : UserControl
         try
         {
             var report = usingIndex
-                ? await _indexed.TrySearchAsync(query, searchAll ? null : root,
+                ? await _indexed.TrySearchForUiAsync(query, searchAll ? null : root,
                     RecursiveBox.IsChecked == true, 5000, cancel.Token)
                 : null;
+            // A superseded live query must not trigger the much slower direct
+            // filesystem fallback when the indexed search returned null.
+            if (cancel.IsCancellationRequested)
+            {
+                if (!_closing && generation == _searchGeneration)
+                    StatusText.Text = $"검색 취소 · {_results.Count:N0}개 결과";
+                return;
+            }
             var wasIndexed = report is not null;
             if (report is null)
             {

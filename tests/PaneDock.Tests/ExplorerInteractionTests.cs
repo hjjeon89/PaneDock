@@ -92,9 +92,11 @@ public sealed class ExplorerInteractionTests
             var targetDirectory = Directory.CreateDirectory(Path.Combine(root, "To"));
             var source = Path.Combine(sourceDirectory.FullName, "original.txt");
             var second = Path.Combine(sourceDirectory.FullName, "another.log");
+            var third = Path.Combine(sourceDirectory.FullName, "third.bin");
             File.WriteAllText(source, "copy only");
             File.WriteAllText(second, "more");
-            var paths = new[] { source, second };
+            File.WriteAllText(third, "third item");
+            var paths = new[] { source, second, third };
 
             Assert.IsNull(FileDropCopyPolicy.GetRejectionReason(paths, targetDirectory.FullName));
             var completed = await ShellFileOperation.RunAsync(0, FileCommand.Copy,
@@ -103,10 +105,33 @@ public sealed class ExplorerInteractionTests
             Assert.IsTrue(completed, "Drop must issue the Shell Copy operation, not Move.");
             Assert.IsTrue(File.Exists(source), "Source file must remain after drag Copy.");
             Assert.IsTrue(File.Exists(second), "Every selected source must remain.");
+            Assert.IsTrue(File.Exists(third), "Third selected source must remain.");
             Assert.AreEqual("copy only", File.ReadAllText(Path.Combine(targetDirectory.FullName, "original.txt")));
             Assert.AreEqual("more", File.ReadAllText(Path.Combine(targetDirectory.FullName, "another.log")));
+            Assert.AreEqual("third item", File.ReadAllText(Path.Combine(targetDirectory.FullName, "third.bin")));
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [TestMethod]
+    public void DragFromSelectedRowKeepsAllFilesEvenAfterGridCollapsesSelection()
+    {
+        var first = new ExplorerEntry(@"C:\Temp\one.txt", "one.txt", ".txt", 3, DateTime.Now, false);
+        var second = new ExplorerEntry(@"C:\Temp\two.txt", "two.txt", ".txt", 3, DateTime.Now, false);
+        var third = new ExplorerEntry(@"C:\Temp\three.txt", "three.txt", ".txt", 5, DateTime.Now, false);
+        var atMouseDown = new[] { first, second, third };
+
+        // WPF can collapse the selection to the clicked row on MouseDown.
+        var currentGridSelection = new[] { second };
+        Assert.AreEqual(1, FileDropCopyPolicy.GetDraggedPaths(currentGridSelection, second).Length);
+
+        var capturedPaths = FileDropCopyPolicy.GetDraggedPaths(atMouseDown, second);
+        CollectionAssert.AreEquivalent(
+            atMouseDown.Select(item => item.FullPath).ToArray(), capturedPaths);
+
+        var outside = third with { FullPath = @"C:\Temp\other.txt" };
+        CollectionAssert.AreEqual(new[] { outside.FullPath },
+            FileDropCopyPolicy.GetDraggedPaths(atMouseDown, outside));
     }
 
     private static string CreateTestRoot()

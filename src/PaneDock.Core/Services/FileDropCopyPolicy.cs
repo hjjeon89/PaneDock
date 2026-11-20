@@ -9,6 +9,21 @@ namespace PaneDock.Core.Services;
 /// </summary>
 public static class FileDropCopyPolicy
 {
+    /// <summary>
+    /// Preserve the selection captured before DataGrid changes it on MouseDown.
+    /// A drag from an unselected row moves only that row's copy payload.
+    /// </summary>
+    public static string[] GetDraggedPaths(IEnumerable<ExplorerEntry> selected, ExplorerEntry dragged)
+    {
+        var entries = selected.Where(item => !item.IsDrive).ToArray();
+        if (!entries.Contains(dragged))
+            entries = [dragged];
+        return entries.Where(item => !item.IsDrive && !ExplorerLocations.IsThisPc(item.FullPath))
+            .Select(item => item.FullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public static string? GetRejectionReason(
         IEnumerable<string>? sources, string? destination, bool verifyExists = true)
     {

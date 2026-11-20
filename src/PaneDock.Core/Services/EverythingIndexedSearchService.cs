@@ -43,12 +43,26 @@ public sealed class EverythingIndexedSearchService
     public Task<FileSearchSummary?> TrySearchAsync(
         string query, string? folder, bool recursive, int maxResults,
         CancellationToken token) =>
-        Task.Run(() => Search(query, folder, recursive, maxResults, token), token);
+        Task.Run(() => Search(query, folder, recursive, maxResults, token,
+            silentCancellation: false), token);
+
+    // Live typing supersedes an earlier query. Avoid debugger interruptions
+    // for those expected cancellations while preserving TrySearchAsync's contract.
+    public Task<FileSearchSummary?> TrySearchForUiAsync(
+        string query, string? folder, bool recursive, int maxResults,
+        CancellationToken token) =>
+        Task.Run(() => Search(query, folder, recursive, maxResults, token,
+            silentCancellation: true));
 
     private FileSearchSummary? Search(
-        string query, string? folder, bool recursive, int maxResults, CancellationToken token)
+        string query, string? folder, bool recursive, int maxResults, CancellationToken token,
+        bool silentCancellation)
     {
-        token.ThrowIfCancellationRequested();
+        if (token.IsCancellationRequested)
+        {
+            if (silentCancellation) return null;
+            token.ThrowIfCancellationRequested();
+        }
         if (!IsAvailable) return null;
         if (string.IsNullOrWhiteSpace(query)) return null;
         if (maxResults is < 1 or > 100000)
@@ -58,7 +72,11 @@ public sealed class EverythingIndexedSearchService
         // SDK call may run until the current results have been copied.
         lock (QueryGate)
         {
-            token.ThrowIfCancellationRequested();
+            if (token.IsCancellationRequested)
+            {
+                if (silentCancellation) return null;
+                token.ThrowIfCancellationRequested();
+            }
             try
             {
                 Native.Reset();
@@ -77,7 +95,11 @@ public sealed class EverythingIndexedSearchService
                 var list = new List<FileSearchResult>(count);
                 for (uint index = 0; index < count; index++)
                 {
-                    token.ThrowIfCancellationRequested();
+                    if (token.IsCancellationRequested)
+                    {
+                        if (silentCancellation) return null;
+                        token.ThrowIfCancellationRequested();
+                    }
                     var needed = Native.GetResultFullPathLength(index, IntPtr.Zero, 0);
                     if (needed is 0 or > 32767) continue;
                     var buffer = new StringBuilder((int)needed + 1);

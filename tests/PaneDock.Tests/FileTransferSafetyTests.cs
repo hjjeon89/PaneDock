@@ -1,9 +1,23 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PaneDock.Core.Services;
+using PaneDock.App;
+using System.Runtime.InteropServices;
 
 [TestClass]
 public sealed class FileTransferSafetyTests
 {
+    [TestMethod]
+    public void ShellCanceledByUserIsNotReportedAsAnError()
+    {
+        Assert.IsTrue(ShellFileOperation.IsUserCancellation(
+            new COMException("User canceled", unchecked((int)0x800704C7))));
+        Assert.IsTrue(ShellFileOperation.IsUserCancellation(
+            new COMException("Operation aborted", unchecked((int)0x80004004))));
+        Assert.IsTrue(ShellFileOperation.IsUserCancellation(new OperationCanceledException()));
+        Assert.IsFalse(ShellFileOperation.IsUserCancellation(
+            new COMException("Access denied", unchecked((int)0x80070005))));
+    }
+
     [TestMethod]
     public void CopyPreflightFindsExistingTargetsAndNeverModifiesFiles()
     {

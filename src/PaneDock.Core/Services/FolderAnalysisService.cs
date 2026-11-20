@@ -16,7 +16,18 @@ public sealed class FolderAnalysisService
     {
         ArgumentNullException.ThrowIfNull(paths);
         var selected = paths.ToArray();
-        return Task.Run(() => Analyze(selected, progress, token), token);
+        return Task.Run(() => Analyze(selected, progress, token, silentCancellation: false)!, token);
+    }
+
+    // UI selection changes cancel the old analysis routinely. Return null
+    // instead of throwing a first-chance exception on every panel switch.
+    public Task<FolderAnalysisReport?> AnalyzeForUiAsync(
+        IEnumerable<string> paths,
+        IProgress<FolderAnalysisProgress>? progress, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        var selected = paths.ToArray();
+        return Task.Run(() => Analyze(selected, progress, token, silentCancellation: true));
     }
 
     public static IReadOnlyList<string> DistinctRoots(IEnumerable<string> selected)
@@ -45,8 +56,9 @@ public sealed class FolderAnalysisService
         return child.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static FolderAnalysisReport Analyze(string[] selected,
-        IProgress<FolderAnalysisProgress>? progress, CancellationToken token)
+    private static FolderAnalysisReport? Analyze(string[] selected,
+        IProgress<FolderAnalysisProgress>? progress, CancellationToken token,
+        bool silentCancellation)
     {
         var validInput = selected.Count(value => !string.IsNullOrWhiteSpace(value));
         var roots = DistinctRoots(selected);
@@ -54,7 +66,11 @@ public sealed class FolderAnalysisService
 
         foreach (var root in roots)
         {
-            token.ThrowIfCancellationRequested();
+            if (token.IsCancellationRequested)
+            {
+                if (silentCancellation) return null;
+                token.ThrowIfCancellationRequested();
+            }
             long files = 0, folders = 0, bytes = 0, skipped = 0;
             string? error = null;
             if (!Directory.Exists(root))
@@ -68,13 +84,21 @@ public sealed class FolderAnalysisService
             var lastProgress = Stopwatch.GetTimestamp();
             while (stack.Count > 0)
             {
-                token.ThrowIfCancellationRequested();
+                if (token.IsCancellationRequested)
+                {
+                    if (silentCancellation) return null;
+                    token.ThrowIfCancellationRequested();
+                }
                 var current = stack.Pop();
                 try
                 {
                     foreach (var info in new DirectoryInfo(current).EnumerateFileSystemInfos())
                     {
-                        token.ThrowIfCancellationRequested();
+                        if (token.IsCancellationRequested)
+                        {
+                            if (silentCancellation) return null;
+                            token.ThrowIfCancellationRequested();
+                        }
                         FileAttributes attributes;
                         try { attributes = info.Attributes; }
                         catch (IOException) { skipped++; continue; }

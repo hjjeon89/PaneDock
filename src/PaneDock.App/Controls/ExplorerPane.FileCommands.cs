@@ -228,8 +228,7 @@ public partial class ExplorerPane
             }
 
             if (!completed)
-                MessageBox.Show(owner, "파일 작업이 취소되었거나 일부 항목을 완료하지 못했습니다.",
-                    "PaneDock", MessageBoxButton.OK, MessageBoxImage.Information);
+                Status.Text = "파일 작업이 취소되었거나 일부 항목이 처리되지 않았습니다.";
             else if (command == FileCommand.Cut)
                 ClearClipboardIfUnchanged(clipboardSequence, new WindowInteropHelper(owner).Handle);
         }

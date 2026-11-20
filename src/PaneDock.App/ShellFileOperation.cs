@@ -81,6 +81,12 @@ internal static class ShellFileOperation
             operation.GetAnyOperationsAborted(out var aborted);
             return !aborted;
         }
+        catch (Exception ex) when (IsUserCancellation(ex))
+        {
+            // Closing/canceling the Windows progress dialog is not a file
+            // operation error. Preserve already completed items and refresh UI.
+            return false;
+        }
         finally
         {
             Marshal.ReleaseComObject(operation);
@@ -88,6 +94,11 @@ internal static class ShellFileOperation
                 Marshal.ReleaseComObject(item);
         }
     }
+
+    internal static bool IsUserCancellation(Exception ex) =>
+        ex is OperationCanceledException
+        || ex is COMException { HResult: unchecked((int)0x800704C7) } // ERROR_CANCELLED
+        || ex is COMException { HResult: unchecked((int)0x80004004) }; // E_ABORT
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int SHCreateItemFromParsingName(

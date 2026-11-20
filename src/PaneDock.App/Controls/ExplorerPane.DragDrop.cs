@@ -19,11 +19,13 @@ public partial class ExplorerPane
     private TabItem? _tabDragItem;
     private Point? _dragStart;
     private ExplorerEntry? _dragStartItem;
+    private ExplorerEntry[]? _dragStartSelection;
 
     private void Files_DragSourceMouseDown(object sender, MouseButtonEventArgs e)
     {
         _dragStart = null;
         _dragStartItem = null;
+        _dragStartSelection = null;
         if (e.ChangedButton != MouseButton.Left || e.OriginalSource is not DependencyObject origin)
             return;
 
@@ -32,6 +34,11 @@ public partial class ExplorerPane
         {
             _dragStart = e.GetPosition(Files);
             _dragStartItem = entry;
+            // Capture before DataGrid processes MouseDown: clicking one of
+            // several selected rows can collapse the selection to that row.
+            // Ctrl/Shift clicks should retain their usual selection behavior.
+            if (Keyboard.Modifiers == ModifierKeys.None && Files.SelectedItems.Contains(entry))
+                _dragStartSelection = Files.SelectedItems.OfType<ExplorerEntry>().ToArray();
         }
     }
 
@@ -39,6 +46,7 @@ public partial class ExplorerPane
     {
         _dragStart = null;
         _dragStartItem = null;
+        _dragStartSelection = null;
     }
 
     private void Files_DragSourceMouseMove(object sender, MouseEventArgs e)
@@ -49,6 +57,7 @@ public partial class ExplorerPane
         {
             _dragStart = null;
             _dragStartItem = null;
+            _dragStartSelection = null;
             return;
         }
 
@@ -57,18 +66,25 @@ public partial class ExplorerPane
             && Math.Abs(position.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
             return;
 
+        var selected = _dragStartSelection is { Length: > 1 } snapshot
+            ? snapshot : Files.SelectedItems.OfType<ExplorerEntry>().ToArray();
+        var paths = FileDropCopyPolicy.GetDraggedPaths(selected, entry);
         _dragStart = null;
         _dragStartItem = null;
-        var selected = Files.SelectedItems.OfType<ExplorerEntry>()
-            .Where(item => !item.IsDrive)
-            .ToArray();
-        if (!selected.Contains(entry))
-            selected = [entry];
-        if (selected.Length == 0)
+        _dragStartSelection = null;
+        if (paths.Length == 0)
             return;
 
-        var paths = selected.Select(item => item.FullPath)
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // Restore multi-selection visually if DataGrid collapsed it between
+        // preview MouseDown and the drag threshold.
+        if (selected.Length > 1)
+        {
+            foreach (var item in selected)
+            {
+                if (Files.Items.Contains(item) && !Files.SelectedItems.Contains(item))
+                    Files.SelectedItems.Add(item);
+            }
+        }
         var files = new StringCollection();
         files.AddRange(paths);
         var data = new DataObject();
@@ -81,8 +97,12 @@ public partial class ExplorerPane
             e.Handled = true;
             DragDrop.DoDragDrop(Files, data, DragDropEffects.Copy);
         }
+        catch (Exception ex) when (ShellFileOperation.IsUserCancellation(ex))
+        {
+            // Esc or cancellation of a Windows drag is not an error.
+        }
         catch (Exception ex) when (ex is ExternalException or IOException
-                                   or ArgumentException or InvalidOperationException)
+                                    or ArgumentException or InvalidOperationException)
         {
             Status.Text = "드래그 시작 실패: " + ex.Message;
         }
@@ -132,6 +152,10 @@ public partial class ExplorerPane
         {
             e.Handled = true;
             DragDrop.DoDragDrop(item, data, DragDropEffects.Move);
+        }
+        catch (Exception ex) when (ShellFileOperation.IsUserCancellation(ex))
+        {
+            // Dropping a dragged tab nowhere, or canceling it, is harmless.
         }
         catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
         {

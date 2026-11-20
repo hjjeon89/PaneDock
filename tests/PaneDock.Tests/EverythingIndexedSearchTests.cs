@@ -18,6 +18,18 @@ public sealed class EverythingIndexedSearchTests
     }
 
     [TestMethod]
+    public async Task SupersededUiSearchReturnsNoResultWithoutCancellationException()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await new EverythingIndexedSearchService().TrySearchForUiAsync(
+            "PaneDock", null, recursive: true, maxResults: 5000, cancellation.Token);
+
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
     public async Task InstalledEverythingIndexReturnsMatchingResults()
     {
         var engine = new EverythingIndexedSearchService();
