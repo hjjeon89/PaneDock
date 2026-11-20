@@ -17,6 +17,9 @@ public partial class MainWindow : Window
     private readonly WorkspaceSessionStore _sessionStore = new();
     private readonly DispatcherTimer _sessionSaveTimer;
     private readonly DispatcherTimer _folderAnalysisTimer;
+    private readonly DispatcherTimer _driveCheckTimer;
+    private readonly DriveChangeDetector _driveChangeDetector = new();
+    private bool _driveCheckRunning;
     private readonly FolderAnalysisService _folderAnalysis = new();
     private readonly Dictionary<PaneLayout, PaneSplitRatios> _layoutRatios = [];
     private Grid? _columnSplitGrid;
@@ -57,6 +60,31 @@ public partial class MainWindow : Window
         {
             _folderAnalysisTimer.Stop();
             await AnalyzeSelectedFoldersAsync();
+        };
+        _driveCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        _driveCheckTimer.Tick += async (_, _) =>
+        {
+            if (_closing || _driveCheckRunning) return;
+            _driveCheckRunning = true;
+            try
+            {
+                var drives = await Task.Run(() =>
+                    DriveInfo.GetDrives().Select(drive => drive.Name).ToArray());
+                if (!_closing && _driveChangeDetector.Update(drives))
+                {
+                    if (_panes is { } panes)
+                    {
+                        foreach (var pane in panes)
+                            pane.RefreshDriveList();
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or System.ComponentModel.Win32Exception)
+            {
+                Trace.WriteLine("드라이브 목록 갱신 대기: " + ex.Message);
+            }
+            finally { _driveCheckRunning = false; }
         };
 
         ApplyTheme(session?.IsDarkTheme == true);
@@ -130,7 +158,11 @@ public partial class MainWindow : Window
             ScheduleSessionSave();
             ResizeSearchPopup();
         };
-        Loaded += (_, _) => ResizeSearchPopup();
+        Loaded += (_, _) =>
+        {
+            ResizeSearchPopup();
+            _driveCheckTimer.Start();
+        };
         StateChanged += (_, _) => ScheduleSessionSave();
         Closing += (_, args) =>
         {
@@ -142,6 +174,7 @@ public partial class MainWindow : Window
             _closing = true;
             SearchPanel.Shutdown();
             _folderAnalysisTimer.Stop();
+            _driveCheckTimer.Stop();
             _folderAnalysisGeneration++;
             _folderAnalysisCancellation?.Cancel();
             _sessionSaveTimer.Stop();

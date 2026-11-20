@@ -175,6 +175,9 @@ public partial class ExplorerPane : UserControl
         tabItem.PreviewDragEnter += Tab_DragOver;
         tabItem.PreviewDragOver += Tab_DragOver;
         tabItem.PreviewDrop += Tab_Drop;
+        tabItem.PreviewMouseLeftButtonDown += Tab_DragStartMouseDown;
+        tabItem.PreviewMouseMove += Tab_DragStartMouseMove;
+        tabItem.PreviewMouseLeftButtonUp += Tab_DragStartMouseUp;
         var context = new ContextMenu();
         var duplicate = new MenuItem { Header = "탭 복제" };
         duplicate.Click += (_, _) =>
@@ -320,8 +323,7 @@ public partial class ExplorerPane : UserControl
         {
             if (tab.Generation != request)
                 return;
-            foreach (var entry in batch)
-                tab.Items.Add(entry);
+            tab.Items.AddRange(batch);
             if (ReferenceEquals(SelectedTab, tab))
                 UpdateStatus();
         });
@@ -778,7 +780,7 @@ public partial class ExplorerPane : UserControl
     {
         public string Path { get; set; } = "";
         public string RequestedPath { get; set; } = ExplorerLocations.ThisPc;
-        public ObservableCollection<ExplorerEntry> Items { get; } = [];
+        public BatchObservableCollection<ExplorerEntry> Items { get; } = [];
         public ICollectionView View { get; }
         public List<ExplorerEntry> SelectedEntries { get; } = [];
         public TextBlock HeaderLabel { get; set; } = null!;

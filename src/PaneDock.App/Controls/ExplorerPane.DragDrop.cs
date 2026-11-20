@@ -13,6 +13,10 @@ namespace PaneDock.App.Controls;
 
 public partial class ExplorerPane
 {
+    private const string TabDragFormat = "PaneDock.InternalTabDrag";
+    private static (ExplorerPane Source, TabItem Item)? _activeTabDrag;
+    private Point? _tabDragStart;
+    private TabItem? _tabDragItem;
     private Point? _dragStart;
     private ExplorerEntry? _dragStartItem;
 
@@ -84,6 +88,107 @@ public partial class ExplorerPane
         }
     }
 
+    private void Tab_DragStartMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _tabDragStart = null;
+        _tabDragItem = null;
+        if (sender is not TabItem tabItem || e.ChangedButton != MouseButton.Left)
+            return;
+        // Clicking the tab's X button must close it, never start dragging.
+        if (e.OriginalSource is DependencyObject origin
+            && FindParent<Button>(origin) is not null)
+            return;
+        _tabDragStart = e.GetPosition(Tabs);
+        _tabDragItem = tabItem;
+    }
+
+    private void Tab_DragStartMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        _tabDragStart = null;
+        _tabDragItem = null;
+    }
+
+    private void Tab_DragStartMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_tabDragStart is not { } start || _tabDragItem is not { } item)
+            return;
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _tabDragStart = null;
+            _tabDragItem = null;
+            return;
+        }
+        var point = e.GetPosition(Tabs);
+        if (Math.Abs(point.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(point.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        _tabDragStart = null;
+        _tabDragItem = null;
+        var data = new DataObject();
+        data.SetData(TabDragFormat, "PaneDockTab");
+        _activeTabDrag = (this, item);
+        try
+        {
+            e.Handled = true;
+            DragDrop.DoDragDrop(item, data, DragDropEffects.Move);
+        }
+        catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
+        {
+            Status.Text = "탭 이동을 시작할 수 없습니다: " + ex.Message;
+        }
+        finally { _activeTabDrag = null; }
+    }
+
+    private static bool IsInternalTabDrag(DragEventArgs e) =>
+        _activeTabDrag is not null && e.Data.GetDataPresent(TabDragFormat);
+
+    private void ShowTabTransferEffect(DragEventArgs e, TabItem? target)
+    {
+        e.Handled = true;
+        var valid = _activeTabDrag is { } source
+            && (target is null || !ReferenceEquals(source.Item, target))
+            && (e.AllowedEffects & DragDropEffects.Move) != 0;
+        e.Effects = valid ? DragDropEffects.Move : DragDropEffects.None;
+    }
+
+    private void DropInternalTab(DragEventArgs e, TabItem? target)
+    {
+        e.Handled = true;
+        e.Effects = DragDropEffects.None;
+        if (_activeTabDrag is not { } drag || !IsInternalTabDrag(e))
+            return;
+        if (ReferenceEquals(drag.Source, this))
+        {
+            if (target is null || ReferenceEquals(target, drag.Item))
+                return;
+            var from = Tabs.Items.IndexOf(drag.Item);
+            var to = Tabs.Items.IndexOf(target);
+            if (from < 0 || to < 0) return;
+            _changingTab = true;
+            try
+            {
+                var moving = Tabs.Items[from];
+                Tabs.Items.RemoveAt(from);
+                Tabs.Items.Insert(to, moving);
+                TabReorderService.Move(_tabs, from, to);
+                Tabs.SelectedItem = moving;
+            }
+            finally { _changingTab = false; }
+            if (SelectedTab is { } selected)
+                ShowTab(selected);
+            SessionChanged?.Invoke(this, EventArgs.Empty);
+        }
+        else
+        {
+            // Reuse the existing source->destination transfer protocol. It
+            // preserves the active tab's path, filter and sort state.
+            drag.Source.Tabs.SelectedItem = drag.Item;
+            drag.Source.MoveTabRequested?.Invoke(drag.Source, Number);
+        }
+        e.Effects = DragDropEffects.Move;
+    }
+
     private static string[]? GetDropPaths(DragEventArgs e)
     {
         try
@@ -119,17 +224,37 @@ public partial class ExplorerPane
             ? string.IsNullOrEmpty(tab.Path) ? tab.RequestedPath : tab.Path
             : null;
 
-    private void Files_DragOver(object sender, DragEventArgs e) =>
-        ShowCopyDropEffect(e, GetDataGridDropFolder(e));
+    private void Files_DragOver(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            ShowTabTransferEffect(e, null);
+        else
+            ShowCopyDropEffect(e, GetDataGridDropFolder(e));
+    }
 
-    private void Pane_DragOver(object sender, DragEventArgs e) =>
-        ShowCopyDropEffect(e, SelectedTab?.Path);
+    private void Pane_DragOver(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            ShowTabTransferEffect(e, null);
+        else
+            ShowCopyDropEffect(e, SelectedTab?.Path);
+    }
 
-    private void FolderTree_DragOver(object sender, DragEventArgs e) =>
-        ShowCopyDropEffect(e, GetTreeDropFolder(e));
+    private void FolderTree_DragOver(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            ShowTabTransferEffect(e, null);
+        else
+            ShowCopyDropEffect(e, GetTreeDropFolder(e));
+    }
 
-    private void Tab_DragOver(object sender, DragEventArgs e) =>
-        ShowCopyDropEffect(e, sender is TabItem tab ? GetTabDropFolder(tab) : null);
+    private void Tab_DragOver(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            ShowTabTransferEffect(e, sender as TabItem);
+        else
+            ShowCopyDropEffect(e, sender is TabItem tab ? GetTabDropFolder(tab) : null);
+    }
 
     private void ShowCopyDropEffect(DragEventArgs e, string? folder)
     {
@@ -141,17 +266,37 @@ public partial class ExplorerPane
         e.Effects = canCopy ? DragDropEffects.Copy : DragDropEffects.None;
     }
 
-    private async void Files_Drop(object sender, DragEventArgs e) =>
-        await CopyDroppedItemsAsync(e, GetDataGridDropFolder(e));
+    private async void Files_Drop(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            DropInternalTab(e, null);
+        else
+            await CopyDroppedItemsAsync(e, GetDataGridDropFolder(e));
+    }
 
-    private async void Pane_Drop(object sender, DragEventArgs e) =>
-        await CopyDroppedItemsAsync(e, SelectedTab?.Path);
+    private async void Pane_Drop(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            DropInternalTab(e, null);
+        else
+            await CopyDroppedItemsAsync(e, SelectedTab?.Path);
+    }
 
-    private async void FolderTree_Drop(object sender, DragEventArgs e) =>
-        await CopyDroppedItemsAsync(e, GetTreeDropFolder(e));
+    private async void FolderTree_Drop(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            DropInternalTab(e, null);
+        else
+            await CopyDroppedItemsAsync(e, GetTreeDropFolder(e));
+    }
 
-    private async void Tab_Drop(object sender, DragEventArgs e) =>
-        await CopyDroppedItemsAsync(e, sender is TabItem tab ? GetTabDropFolder(tab) : null);
+    private async void Tab_Drop(object sender, DragEventArgs e)
+    {
+        if (IsInternalTabDrag(e))
+            DropInternalTab(e, sender as TabItem);
+        else
+            await CopyDroppedItemsAsync(e, sender is TabItem tab ? GetTabDropFolder(tab) : null);
+    }
 
     private async Task CopyDroppedItemsAsync(DragEventArgs e, string? target)
     {

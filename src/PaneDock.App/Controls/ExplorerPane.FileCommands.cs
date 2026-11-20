@@ -25,6 +25,13 @@ public partial class ExplorerPane
         InvalidateTree(folders);
     }
 
+    internal void RefreshDriveList()
+    {
+        foreach (var tab in _tabs.Where(tab =>
+                     ExplorerLocations.IsThisPc(tab.Path)))
+            RequestSnapshotRefresh(tab);
+    }
+
     private static bool SamePath(string left, string right) =>
         ExplorerLocations.IsThisPc(left) || ExplorerLocations.IsThisPc(right)
             ? ExplorerLocations.IsThisPc(left) && ExplorerLocations.IsThisPc(right)
