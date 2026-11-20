@@ -152,6 +152,43 @@ public partial class ExplorerPane
                 name = AskForName(owner, originalName);
                 if (name is null || name == originalName)
                     return;
+                var newPath = Path.Combine(folder, name);
+                if (!string.Equals(newPath,
+                        command == FileCommand.Rename ? selected[0].FullPath : null,
+                        StringComparison.OrdinalIgnoreCase)
+                    && (File.Exists(newPath) || Directory.Exists(newPath)))
+                {
+                    MessageBox.Show(owner, "해당 이름의 파일이나 폴더가 이미 있습니다.\n\n"
+                        + newPath, "이름 충돌", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            if (command is FileCommand.Copy or FileCommand.Cut)
+            {
+                var check = await Task.Run(() =>
+                    FileTransferPreflight.Check(paths, folder, moving: command == FileCommand.Cut));
+                if (!check.CanProceed)
+                {
+                    Status.Text = check.Error!;
+                    MessageBox.Show(owner, check.Error!, "파일 작업 확인",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                if (!ConfirmFileConflicts(owner, check.Collisions))
+                    return;
+            }
+            else if (command == FileCommand.Delete)
+            {
+                var folderCount = selected.Count(entry => entry.IsDirectory);
+                var prompt = $"{selected.Length:N0}개 항목을 삭제하시겠습니까?\n"
+                    + $"파일 {selected.Length - folderCount:N0}개 / 폴더 {folderCount:N0}개\n\n"
+                    + "Windows 휴지통 이동을 요청합니다. 폴더 내부의 항목도 함께 삭제되며, "
+                    + "휴지통이 없는 위치에서는 Windows가 영구 삭제를 경고할 수 있습니다.";
+                if (MessageBox.Show(owner, prompt, "삭제 확인",
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                        MessageBoxResult.No) != MessageBoxResult.Yes)
+                    return;
             }
 
             var changed = new List<string> { folder };
@@ -190,6 +227,19 @@ public partial class ExplorerPane
         {
             _fileOperationRunning = false;
         }
+    }
+
+    private static bool ConfirmFileConflicts(Window owner, IReadOnlyList<string> collisions)
+    {
+        if (collisions.Count == 0) return true;
+        var sample = string.Join("\n", collisions.Take(4));
+        var message = $"대상 폴더에 같은 이름의 항목이 {collisions.Count:N0}개 있습니다.\n\n"
+            + sample + (collisions.Count > 4 ? "\n…" : "") + "\n\n"
+            + "계속하면 Windows에서 충돌 처리 방법을 묻게 됩니다. "
+            + "기존 파일을 보존하려면 '바꾸기'를 선택하지 마세요.\n\n계속하시겠습니까?";
+        return MessageBox.Show(owner, message, "이름 충돌 확인",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning,
+            MessageBoxResult.No) == MessageBoxResult.Yes;
     }
 
     private static string? AskForName(Window owner, string? originalName)

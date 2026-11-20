@@ -175,6 +175,18 @@ public partial class ExplorerPane
         _fileOperationRunning = true;
         try
         {
+            var check = await Task.Run(() => FileTransferPreflight.Check(sources, target));
+            if (!check.CanProceed)
+            {
+                Status.Text = check.Error!;
+                return;
+            }
+            if (!ConfirmFileConflicts(owner, check.Collisions))
+            {
+                Status.Text = "이름 충돌이 있는 복사를 취소했습니다.";
+                return;
+            }
+
             var completed = await ShellFileOperation.RunAsync(
                 new WindowInteropHelper(owner).Handle, FileCommand.Copy, target, sources);
             if (completed)
