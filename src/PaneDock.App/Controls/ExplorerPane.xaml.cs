@@ -76,6 +76,13 @@ public partial class ExplorerPane : UserControl
                 UpdateStatus();
             }
         };
+        _fileFeedbackTimer.Tick += (_, _) =>
+        {
+            _fileFeedbackTimer.Stop();
+            _fileFeedback = null;
+            if (!_disposed)
+                UpdateStatus();
+        };
         _gitStatusTimer.Tick += (_, _) =>
         {
             if (IsVisible && !_disposed)
@@ -429,6 +436,11 @@ public partial class ExplorerPane : UserControl
         if (!string.IsNullOrWhiteSpace(tab.Error))
         {
             Status.Text = tab.Error;
+            return;
+        }
+        if (_fileFeedback is not null)
+        {
+            Status.Text = _fileFeedback;
             return;
         }
         var count = Files.Items.Count;

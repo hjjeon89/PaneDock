@@ -14,8 +14,29 @@ public sealed class FileTransferSafetyTests
         Assert.IsTrue(ShellFileOperation.IsUserCancellation(
             new COMException("Operation aborted", unchecked((int)0x80004004))));
         Assert.IsTrue(ShellFileOperation.IsUserCancellation(new OperationCanceledException()));
+        Assert.IsTrue(ShellFileOperation.IsUserCancellation(
+            new COMException("Shell canceled", unchecked((int)0x80270000))));
+        Assert.IsTrue(ShellFileOperation.IsUserCancellation(
+            new COMException("Shell stopped", unchecked((int)0x80270001))));
         Assert.IsFalse(ShellFileOperation.IsUserCancellation(
             new COMException("Access denied", unchecked((int)0x80070005))));
+    }
+
+    [TestMethod]
+    public void FileOperationSummaryDistinguishesSuccessPartialAndSkip()
+    {
+        var success = new ShellFileOperationResult(3, 3, 0, false, false);
+        Assert.IsTrue(success.Succeeded);
+        StringAssert.Contains(success.Describe(FileCommand.Copy), "3개 항목 복사 완료");
+
+        var partial = new ShellFileOperationResult(3, 1, 0, true, true);
+        Assert.IsFalse(partial.Succeeded);
+        StringAssert.Contains(partial.Describe(FileCommand.Cut), "1개 이동 완료");
+        StringAssert.Contains(partial.Describe(FileCommand.Cut), "2개 미완료");
+
+        var skipped = new ShellFileOperationResult(3, 2, 0, false, false, SkippedItems: 1);
+        Assert.IsFalse(skipped.Succeeded);
+        StringAssert.Contains(skipped.Describe(FileCommand.Copy), "건너뛴 항목");
     }
 
     [TestMethod]
@@ -78,6 +99,39 @@ public sealed class FileTransferSafetyTests
             Assert.IsFalse(FileTransferPreflight.Check(
                 [original], Path.Combine(root, "disconnected")).CanProceed);
             Assert.AreEqual("keep", File.ReadAllText(original));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [TestMethod]
+    public void SameTargetNamesOrNestedSourcesAreRejectedWithoutChanges()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var first = Directory.CreateDirectory(Path.Combine(root, "first"));
+            var second = Directory.CreateDirectory(Path.Combine(root, "second"));
+            var target = Directory.CreateDirectory(Path.Combine(root, "target"));
+            var a = Path.Combine(first.FullName, "same.txt");
+            var b = Path.Combine(second.FullName, "SAME.TXT");
+            File.WriteAllText(a, "original A");
+            File.WriteAllText(b, "original B");
+            var check = FileTransferPreflight.Check([a, b], target.FullName);
+            Assert.IsFalse(check.CanProceed);
+            StringAssert.Contains(check.Error!, "동일한 이름");
+
+            var nested = Path.Combine(first.FullName, "child.txt");
+            File.WriteAllText(nested, "keep");
+            var overlap = FileTransferPreflight.Check([first.FullName, nested], target.FullName,
+                moving: true);
+            Assert.IsFalse(overlap.CanProceed);
+            StringAssert.Contains(overlap.Error!, "하위 항목");
+
+            Assert.IsFalse(FileTransferPreflight.Check([a, ""], target.FullName).CanProceed);
+            Assert.AreEqual("original A", File.ReadAllText(a));
+            Assert.AreEqual("original B", File.ReadAllText(b));
+            Assert.AreEqual("keep", File.ReadAllText(nested));
+            Assert.AreEqual(0, Directory.GetFileSystemEntries(target.FullName).Length);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

@@ -84,6 +84,28 @@ public sealed class ExplorerKeyboardShortcutsTests
     }
 
     [TestMethod]
+    public void TabShortcutsStillWorkWhileAddressOrFilterBoxHasFocus()
+    {
+        Check(Key.T, ModifierKeys.Control, ExplorerShortcutAction.NewTab,
+            editingText: true);
+        Check(Key.W, ModifierKeys.Control, ExplorerShortcutAction.CloseTab,
+            editingText: true);
+        Check(Key.Tab, ModifierKeys.Control, ExplorerShortcutAction.NextTab,
+            editingText: true);
+        Check(Key.Tab, ModifierKeys.Control | ModifierKeys.Shift,
+            ExplorerShortcutAction.PreviousTab, editingText: true);
+        Check(Key.Next, ModifierKeys.Control, ExplorerShortcutAction.NextTab,
+            editingText: true);
+        Check(Key.Prior, ModifierKeys.Control, ExplorerShortcutAction.PreviousTab,
+            editingText: true);
+        // Typing or editing must never accidentally navigate or delete files.
+        Check(Key.Back, ModifierKeys.None, ExplorerShortcutAction.None,
+            editingText: true);
+        Check(Key.Delete, ModifierKeys.Shift, ExplorerShortcutAction.None,
+            editingText: true);
+    }
+
+    [TestMethod]
     public void PermanentDeleteNeverUsesRecycleOrUndoFlags()
     {
         const uint recycle = 0x00080000;

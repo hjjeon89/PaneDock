@@ -356,12 +356,13 @@ public partial class ExplorerPane
                 return;
             }
 
-            var completed = await ShellFileOperation.RunAsync(
+            var result = await ShellFileOperation.RunDetailedAsync(
                 new WindowInteropHelper(owner).Handle, FileCommand.Copy, target, sources);
-            if (completed)
-                Status.Text = $"{sources.Length:N0}개 항목 복사 완료";
-            else
-                Status.Text = "복사가 취소되었거나 일부 항목을 완료하지 못했습니다.";
+            ShowFileFeedback(result.Describe(FileCommand.Copy));
+            if (result.Error is not null)
+                MessageBox.Show(owner, result.Describe(FileCommand.Copy)
+                    + "\n\n" + result.Error, "파일 복사 오류",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex) when (ex is ExternalException or IOException or ArgumentException
                                    or UnauthorizedAccessException or NotSupportedException)

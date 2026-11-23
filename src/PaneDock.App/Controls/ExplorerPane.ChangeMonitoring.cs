@@ -28,7 +28,7 @@ public partial class ExplorerPane
         {
             if (ReferenceEquals(tab.Watcher, watcher))
             {
-                if (ReferenceEquals(SelectedTab, tab))
+                if (ReferenceEquals(SelectedTab, tab) && _fileFeedback is null)
                     Status.Text = "외부 파일 변경 감지 · 목록 갱신 중…";
                 RequestSnapshotRefresh(tab);
             }
@@ -197,6 +197,7 @@ public partial class ExplorerPane
             return;
         _disposed = true;
         _filterTimer.Stop();
+        _fileFeedbackTimer.Stop();
         _gitStatusTimer.Stop();
         _gitRequestVersion++;
         foreach (var tab in _tabs)

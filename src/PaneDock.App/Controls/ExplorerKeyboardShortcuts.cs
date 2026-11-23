@@ -32,9 +32,9 @@ internal enum ExplorerShortcutAction
 }
 
 /// <summary>
-/// Centralizes Windows Explorer-style keyboard gestures. Text editing is
-/// deliberately excluded so Ctrl+C/V, Delete and Backspace still work in
-/// address and filter text boxes.
+/// Centralizes Windows Explorer-style keyboard gestures. Text editing
+/// shortcuts remain native inside address/filter boxes, but tab gestures
+/// do not conflict with editing and should work anywhere in a pane.
 /// </summary>
 internal static class ExplorerKeyboardShortcuts
 {
@@ -42,7 +42,19 @@ internal static class ExplorerKeyboardShortcuts
         Key key, ModifierKeys modifiers, bool fileListFocused, bool textEditing)
     {
         if (textEditing)
-            return ExplorerShortcutAction.None;
+        {
+            return (modifiers, key) switch
+            {
+                (ModifierKeys.Control, Key.T) => ExplorerShortcutAction.NewTab,
+                (ModifierKeys.Control, Key.W) => ExplorerShortcutAction.CloseTab,
+                (ModifierKeys.Control, Key.Tab) or (ModifierKeys.Control, Key.Next) =>
+                    ExplorerShortcutAction.NextTab,
+                (ModifierKeys.Control | ModifierKeys.Shift, Key.Tab) or
+                    (ModifierKeys.Control, Key.Prior) =>
+                    ExplorerShortcutAction.PreviousTab,
+                _ => ExplorerShortcutAction.None
+            };
+        }
 
         var action = (modifiers, key) switch
         {

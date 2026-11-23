@@ -25,11 +25,18 @@ public sealed class EverythingIndexedSearchService
                 return false;
             try
             {
-                // Do not repeatedly perform a full filesystem scan as the user types
-                // when the Everything background process is unavailable.
-                return Process.GetProcessesByName("Everything").Length > 0;
+                // A running process is not enough: the optional IPC endpoint
+                // might be unavailable or its database may still be loading.
+                // The SDK reports version 0 when IPC cannot be reached.
+                if (Process.GetProcessesByName("Everything").Length == 0)
+                    return false;
+                lock (QueryGate)
+                    return Native.GetMajorVersion() > 0 && Native.IsDbLoaded();
             }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception ex) when (ex is InvalidOperationException
+                                       or System.ComponentModel.Win32Exception
+                                       or DllNotFoundException or EntryPointNotFoundException
+                                       or BadImageFormatException)
             {
                 return false;
             }
@@ -161,6 +168,13 @@ public sealed class EverythingIndexedSearchService
 
     private static class Native
     {
+        [DllImport("Everything64.dll", EntryPoint = "Everything_GetMajorVersion")]
+        internal static extern uint GetMajorVersion();
+
+        [DllImport("Everything64.dll", EntryPoint = "Everything_IsDBLoaded")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsDbLoaded();
+
         [DllImport("Everything64.dll", EntryPoint = "Everything_Reset")]
         internal static extern void Reset();
 

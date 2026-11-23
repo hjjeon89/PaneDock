@@ -6,6 +6,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using PaneDock.Core.Models;
 using PaneDock.Core.Services;
 
@@ -15,6 +16,19 @@ public partial class ExplorerPane
 {
     private const string PreferredDropEffect = "Preferred DropEffect";
     private static bool _fileOperationRunning;
+    private readonly DispatcherTimer _fileFeedbackTimer =
+        new() { Interval = TimeSpan.FromSeconds(8) };
+    private string? _fileFeedback;
+
+    // Folder watchers refresh the file count immediately after an operation.
+    // Keep the actual copy/move/delete outcome visible long enough to read it.
+    private void ShowFileFeedback(string message)
+    {
+        _fileFeedback = message;
+        Status.Text = message;
+        _fileFeedbackTimer.Stop();
+        _fileFeedbackTimer.Start();
+    }
 
     internal event Action<string[]>? FileLocationsChanged;
 
@@ -169,7 +183,7 @@ public partial class ExplorerPane
             if (command == FileCommand.NewFile)
             {
                 var created = await new NewFileService().CreateEmptyAsync(folder, name!);
-                Status.Text = "새 파일 생성: " + Path.GetFileName(created);
+                ShowFileFeedback("새 파일 생성: " + Path.GetFileName(created));
                 FileLocationsChanged?.Invoke([folder]);
                 return;
             }
@@ -215,19 +229,22 @@ public partial class ExplorerPane
                 }
             }
 
-            bool completed;
+            ShellFileOperationResult result;
             try
             {
-                completed = await ShellFileOperation.RunAsync(new WindowInteropHelper(owner).Handle, command, folder, paths, name);
+                result = await ShellFileOperation.RunDetailedAsync(
+                    new WindowInteropHelper(owner).Handle, command, folder, paths, name);
             }
             finally
             {
                 FileLocationsChanged?.Invoke(changed.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
             }
 
-            if (!completed)
-                Status.Text = "파일 작업이 취소되었거나 일부 항목이 처리되지 않았습니다.";
-            else if (command == FileCommand.Cut)
+            ShowFileFeedback(result.Describe(command));
+            if (result.Error is not null)
+                MessageBox.Show(owner, result.Describe(command) + "\n\n" + result.Error,
+                    "파일 작업 오류", MessageBoxButton.OK, MessageBoxImage.Warning);
+            else if (result.Succeeded && command == FileCommand.Cut)
                 ClearClipboardIfUnchanged(clipboardSequence, new WindowInteropHelper(owner).Handle);
         }
         catch (Exception ex) when (ex is ExternalException or IOException or ArgumentException

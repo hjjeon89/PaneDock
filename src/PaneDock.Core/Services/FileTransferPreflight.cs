@@ -16,9 +16,11 @@ public static class FileTransferPreflight
     {
         if (sources is null)
             return new Result("복사하거나 이동할 파일이 없습니다.", []);
-        var paths = sources.Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
+        var paths = sources.ToArray();
         if (paths.Length == 0)
             return new Result("복사하거나 이동할 파일이 없습니다.", []);
+        if (paths.Any(string.IsNullOrWhiteSpace))
+            return new Result("원본 경로가 비어 있는 항목이 포함되어 있습니다.", []);
 
         string target;
         try
@@ -36,6 +38,8 @@ public static class FileTransferPreflight
         }
 
         var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var selectedFolders = new List<string>();
         var collisions = new List<string>();
         foreach (var path in paths)
         {
@@ -61,15 +65,29 @@ public static class FileTransferPreflight
             if (!folder && !File.Exists(source))
                 return new Result("원본이 없어졌거나 접근할 수 없습니다: " + source, []);
 
+            if (folder)
+                selectedFolders.Add(source);
             if (folder && IsSameOrDescendant(target, source))
                 return new Result("폴더를 자기 자신이나 하위 폴더로 복사/이동할 수 없습니다.", []);
-            var childTarget = Path.Combine(target, Path.GetFileName(source));
+            var filename = Path.GetFileName(source);
+            if (!targetNames.Add(filename))
+                return new Result("동일한 이름의 원본 항목이 여러 개 선택되었습니다: "
+                    + filename + ". 이름을 구분한 뒤 다시 시도하세요.", []);
+            var childTarget = Path.Combine(target, filename);
             if (moving && string.Equals(source, childTarget, StringComparison.OrdinalIgnoreCase))
                 return new Result("원본과 대상이 같은 폴더입니다.", []);
 
             if (File.Exists(childTarget) || Directory.Exists(childTarget))
                 collisions.Add(childTarget);
         }
+
+        // Clipboard or external drops can contain both a folder and a child
+        // of that folder. Queuing them together risks confusing partial moves
+        // after the parent has already been moved.
+        if (unique.Any(source => selectedFolders.Any(folder =>
+                !source.Equals(folder, StringComparison.OrdinalIgnoreCase)
+                && IsSameOrDescendant(source, folder))))
+            return new Result("폴더와 그 하위 항목을 동시에 복사하거나 이동할 수 없습니다.", []);
 
         return new Result(null, collisions);
     }
