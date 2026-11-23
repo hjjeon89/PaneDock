@@ -8,6 +8,7 @@
         Background="{DynamicResource WindowBackground}"
         Foreground="{DynamicResource TextPrimary}"
         Width="1440" Height="900" MinWidth="760" MinHeight="550"
+        PreviewKeyDown="Window_PreviewKeyDown"
         WindowStartupLocation="CenterScreen">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="0"
@@ -40,7 +41,7 @@
                 <TextBlock Text="PaneDock" FontSize="16" FontWeight="SemiBold"
                            VerticalAlignment="Center" Margin="0,0,20,0"/>
                 <TextBox x:Name="GlobalSearchBox" Width="224" Height="28"
-                         VerticalContentAlignment="Center" ToolTip="파일명 입력 시 아래에 전체 검색 결과 표시 · Enter: 검색 · Esc: 닫기"
+                          VerticalContentAlignment="Center" ToolTip="전체 검색 (Ctrl+E, F3) · Enter: 검색 · Esc: 닫기"
                          shell:WindowChrome.IsHitTestVisibleInChrome="True"
                          TextChanged="GlobalSearch_TextChanged"
                          KeyDown="GlobalSearch_KeyDown"
@@ -52,6 +53,11 @@
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                <Button x:Name="ShortcutHelpButton" Content="?" Width="30" Height="28"
+                        Padding="0" Margin="0,0,8,0" FontSize="15" FontWeight="Bold"
+                        ToolTip="단축키 도움말 (F1)"
+                        AutomationProperties.Name="단축키 도움말"
+                        Click="ShortcutHelp_Click"/>
                 <Button x:Name="ThemeButton" Content="◐ Light" ToolTip="현재 Light · Dark로 변경"
                          Click="Theme_Click" Margin="0,0,10,0" VerticalAlignment="Center" Padding="12,4"/>
                 <Button Style="{StaticResource WindowButton}" Content="&#xE921;"
@@ -163,6 +169,78 @@
                PlacementTarget="{Binding ElementName=GlobalSearchBox}"
                Opened="SearchPopup_Opened" Closed="SearchPopup_Closed">
             <local:SearchPanel x:Name="SearchPanel"/>
+        </Popup>
+        <Popup x:Name="ShortcutHelpPopup" Placement="Bottom" StaysOpen="False"
+               AllowsTransparency="True" VerticalOffset="6" HorizontalOffset="-495"
+               PlacementTarget="{Binding ElementName=ShortcutHelpButton}">
+            <Border Width="530" Padding="14" CornerRadius="9"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                    Background="{DynamicResource CardBackground}"
+                    PreviewKeyDown="ShortcutHelp_PreviewKeyDown">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="0,0,0,10">
+                        <Button DockPanel.Dock="Right" Content="×"
+                                Width="28" Height="28" MinHeight="0" Padding="0"
+                                ToolTip="단축키 도움말 닫기 (Esc)"
+                                AutomationProperties.Name="도움말 닫기"
+                                Click="ShortcutHelpClose_Click"/>
+                        <StackPanel>
+                            <TextBlock Text="⌨ 키보드 단축키" FontSize="16" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextPrimary}"/>
+                            <TextBlock Text="PaneDock에서 지원하는 Windows 탐색기 단축키"
+                                       FontSize="11" Margin="0,3,0,0"
+                                       Foreground="{DynamicResource TextSecondary}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <ScrollViewer Grid.Row="1" x:Name="ShortcutHelpScroll"
+                                  MaxHeight="380" HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="ShortcutHelpGroupsList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="10" Margin="0,0,5,8" CornerRadius="6"
+                                            Background="{DynamicResource PanelBackground}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontSize="12"
+                                                       Margin="0,0,0,5" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}"/>
+                                            <ItemsControl ItemsSource="{Binding Entries}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Margin="0,3,0,3">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="205"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="{Binding Keys}" Grid.Column="0"
+                                                                       VerticalAlignment="Center"
+                                                                       FontSize="11" FontWeight="SemiBold"
+                                                                       Foreground="{DynamicResource TextPrimary}"/>
+                                                            <TextBlock Text="{Binding Description}" Grid.Column="1"
+                                                                       VerticalAlignment="Center"
+                                                                       FontSize="11" TextWrapping="Wrap"
+                                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Grid.Row="2" Margin="2,9,0,0" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"
+                               TextWrapping="Wrap"
+                               Text="※ 선택 파일 명령은 파일 목록에 포커스가 있을 때 사용합니다. 주소창·필터 입력 중에는 기본 텍스트 편집 단축키가 적용됩니다."/>
+                </Grid>
+            </Border>
         </Popup>
     </Grid>
 </Window>

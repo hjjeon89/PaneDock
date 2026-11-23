@@ -34,9 +34,44 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _folderAnalysisCancellation;
     private int _folderAnalysisGeneration;
 
+    // Dispatch explorer shortcuts at the window level, before focusable
+    // controls (DataGrid, TabControl, breadcrumb buttons) can consume them.
+    // The actual command still belongs to the focused/active explorer pane.
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F1 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            ToggleShortcutHelp();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && ShortcutHelpPopup.IsOpen)
+        {
+            ShortcutHelpPopup.IsOpen = false;
+            e.Handled = true;
+            return;
+        }
+        if (e.Handled || _panes is not { } panes
+            || GlobalSearchBox.IsKeyboardFocusWithin
+            || SearchPanel.IsKeyboardFocusWithin)
+            return;
+
+        var target = panes.FirstOrDefault(pane => pane.IsKeyboardFocusWithin)
+                     ?? _activePane;
+        if (target is null || !target.IsVisible)
+            return;
+        if (target.TryHandleShortcut(e))
+        {
+            if (!ReferenceEquals(_activePane, target))
+                SetActivePane(target);
+            e.Handled = true;
+        }
+    }
+
     public MainWindow()
     {
         InitializeComponent();
+        ShortcutHelpGroupsList.ItemsSource = ShortcutHelpCatalog.Groups;
         SearchPanel.OwnerWindow = this;
         var session = _sessionStore.Load();
         RestoreWindowPlacement(session?.WindowPlacement);
@@ -116,6 +151,14 @@ public partial class MainWindow : Window
         foreach (var pane in _panes)
         {
             pane.Activated += (_, _) => SetActivePane(pane);
+            pane.GlobalSearchRequested += (_, _) =>
+            {
+                if (GlobalSearchBox.IsEnabled)
+                {
+                    GlobalSearchBox.Focus();
+                    GlobalSearchBox.SelectAll();
+                }
+            };
             pane.SessionChanged += (_, _) => ScheduleSessionSave();
             pane.FolderSelectionChanged += (_, _) =>
             {
@@ -185,6 +228,35 @@ public partial class MainWindow : Window
             foreach (var pane in _panes)
                 pane.Dispose();
         };
+    }
+
+    private void ShortcutHelp_Click(object sender, RoutedEventArgs e) =>
+        ToggleShortcutHelp();
+
+    private void ShortcutHelpClose_Click(object sender, RoutedEventArgs e) =>
+        ShortcutHelpPopup.IsOpen = false;
+
+    private void ShortcutHelp_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Escape or Key.F1)
+        {
+            ShortcutHelpPopup.IsOpen = false;
+            e.Handled = true;
+        }
+    }
+
+    private void ToggleShortcutHelp()
+    {
+        if (ShortcutHelpPopup.IsOpen)
+        {
+            ShortcutHelpPopup.IsOpen = false;
+            return;
+        }
+        FolderBreakdownPopup.IsOpen = false;
+        if (!SearchPanel.IsDeletionRunning)
+            SearchPopup.IsOpen = false;
+        ShortcutHelpScroll.ScrollToTop();
+        ShortcutHelpPopup.IsOpen = true;
     }
 
     private void SetActivePane(ExplorerPane selected)
@@ -703,6 +775,7 @@ public partial class MainWindow : Window
             Set("TextSecondary", "#52667E");
             Set("AccentBrush", "#1973C8");
             Set("SelectionBrush", "#C7E3FF");
+            Set("InactiveSelectionBrush", "#E5EDF6");
         }
         else
         {
@@ -714,6 +787,7 @@ public partial class MainWindow : Window
             Set("TextSecondary", "#9DB0C8");
             Set("AccentBrush", "#4DADFF");
             Set("SelectionBrush", "#254E74");
+            Set("InactiveSelectionBrush", "#2B3A4E");
         }
 
         if (_activePane is not null)

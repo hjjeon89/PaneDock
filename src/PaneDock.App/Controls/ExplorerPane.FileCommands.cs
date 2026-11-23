@@ -53,10 +53,22 @@ public partial class ExplorerPane
     }
 
     private void Files_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        => UpdateFileContextMenu();
+
+    private void UpdateFileContextMenu()
     {
         foreach (var item in Files.ContextMenu.Items.OfType<MenuItem>())
             item.IsEnabled = item.Tag is string tag && Enum.TryParse<FileCommand>(tag, out var command)
                 && CanRunFileCommand(command);
+    }
+
+    private void ShowFileContextMenu()
+    {
+        if (Files.ContextMenu is not { } menu)
+            return;
+        UpdateFileContextMenu();
+        menu.PlacementTarget = Files;
+        menu.IsOpen = true;
     }
 
     private void Files_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -76,25 +88,6 @@ public partial class ExplorerPane
     {
         if (sender is MenuItem { Tag: string tag } && Enum.TryParse<FileCommand>(tag, out var command))
             await RunFileCommandAsync(command);
-    }
-
-    private bool HandleFileKey(Key key)
-    {
-        FileCommand? command = (Keyboard.Modifiers, key) switch
-        {
-            (ModifierKeys.Control | ModifierKeys.Shift, Key.N) => FileCommand.NewFolder,
-            (ModifierKeys.Control | ModifierKeys.Alt, Key.N) => FileCommand.NewFile,
-            (ModifierKeys.None, Key.F2) => FileCommand.Rename,
-            (ModifierKeys.Control, Key.X) => FileCommand.Cut,
-            (ModifierKeys.Control, Key.C) => FileCommand.Copy,
-            (ModifierKeys.Control, Key.V) => FileCommand.Paste,
-            (ModifierKeys.None, Key.Delete) => FileCommand.Delete,
-            _ => null
-        };
-        if (command is null)
-            return false;
-        _ = RunFileCommandAsync(command.Value);
-        return true;
     }
 
     private async Task RunFileCommandAsync(FileCommand command)
@@ -124,6 +117,7 @@ public partial class ExplorerPane
             }
 
             string[] paths = command is FileCommand.Rename or FileCommand.Delete
+                or FileCommand.DeletePermanently
                 ? selected.Select(entry => entry.FullPath).ToArray() : [];
             uint clipboardSequence = 0;
             string? name = null;
@@ -194,21 +188,25 @@ public partial class ExplorerPane
                 if (!ConfirmFileConflicts(owner, check.Collisions))
                     return;
             }
-            else if (command == FileCommand.Delete)
+            else if (command is FileCommand.Delete or FileCommand.DeletePermanently)
             {
                 var folderCount = selected.Count(entry => entry.IsDirectory);
                 var prompt = $"{selected.Length:N0}개 항목을 삭제하시겠습니까?\n"
                     + $"파일 {selected.Length - folderCount:N0}개 / 폴더 {folderCount:N0}개\n\n"
-                    + "Windows 휴지통 이동을 요청합니다. 폴더 내부의 항목도 함께 삭제되며, "
-                    + "휴지통이 없는 위치에서는 Windows가 영구 삭제를 경고할 수 있습니다.";
-                if (MessageBox.Show(owner, prompt, "삭제 확인",
+                    + (command == FileCommand.DeletePermanently
+                        ? "휴지통을 거치지 않고 영구 삭제합니다. 복구할 수 없습니다."
+                        : "Windows 휴지통 이동을 요청합니다. 폴더 내부의 항목도 함께 삭제되며, "
+                          + "휴지통이 없는 위치에서는 Windows가 영구 삭제를 경고할 수 있습니다.");
+                if (MessageBox.Show(owner, prompt,
+                        command == FileCommand.DeletePermanently ? "영구 삭제 확인" : "삭제 확인",
                         MessageBoxButton.YesNo, MessageBoxImage.Warning,
                         MessageBoxResult.No) != MessageBoxResult.Yes)
                     return;
             }
 
             var changed = new List<string> { folder };
-            if (command is FileCommand.Cut or FileCommand.Delete or FileCommand.Rename)
+            if (command is FileCommand.Cut or FileCommand.Delete or
+                FileCommand.DeletePermanently or FileCommand.Rename)
             {
                 foreach (var path in paths)
                 {

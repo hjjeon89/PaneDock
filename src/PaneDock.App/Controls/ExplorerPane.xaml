@@ -3,10 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:PaneDock.App.Controls"
              MinWidth="215" MinHeight="175"
-             PreviewKeyDown="Pane_PreviewKeyDown"
-             GotKeyboardFocus="Activate_OnFocus">
+              PreviewMouseLeftButtonDown="Activate_OnMouseDown"
+              PreviewMouseRightButtonDown="Activate_OnMouseDown"
+              GotKeyboardFocus="Activate_OnFocus">
     <UserControl.Resources>
         <local:ShellIconConverter x:Key="ShellIconConverter"/>
+        <local:GitStatusBadgeConverter x:Key="GitStatusBadgeConverter"/>
     </UserControl.Resources>
     <Border x:Name="OuterBorder" BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="1" CornerRadius="8"
@@ -31,7 +33,12 @@
                 <TextBlock x:Name="PaneTitle" DockPanel.Dock="Left" VerticalAlignment="Center"
                            Margin="10,0" FontWeight="SemiBold"/>
                 <Button DockPanel.Dock="Right" HorizontalAlignment="Right" Content="+"
-                        Width="30" Padding="0" ToolTip="새 탭" Click="NewTab_Click"/>
+                        Width="30" Padding="0" ToolTip="새 탭 (Ctrl+T)" Click="NewTab_Click"/>
+                <TextBlock x:Name="GitBranchBadge" DockPanel.Dock="Right"
+                           Visibility="Collapsed" VerticalAlignment="Center"
+                           Margin="4,0,6,0" MaxWidth="90" FontSize="11"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource TextSecondary}"/>
                 <TabControl x:Name="Tabs" SelectionChanged="Tabs_SelectionChanged"
                             BorderThickness="0" Padding="0"/>
             </DockPanel>
@@ -46,9 +53,9 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Button Grid.Column="0" Content="←" ToolTip="뒤로" Width="30" Padding="0" Click="Back_Click"/>
-                <Button Grid.Column="1" Content="→" ToolTip="앞으로" Width="30" Padding="0" Click="Forward_Click"/>
-                <Button Grid.Column="2" Content="↑" ToolTip="상위 폴더" Width="30" Padding="0" Click="Up_Click"/>
+                <Button Grid.Column="0" Content="←" ToolTip="뒤로 (Backspace, Alt+←)" Width="30" Padding="0" Click="Back_Click"/>
+                <Button Grid.Column="1" Content="→" ToolTip="앞으로 (Alt+→)" Width="30" Padding="0" Click="Forward_Click"/>
+                <Button Grid.Column="2" Content="↑" ToolTip="상위 폴더 (Alt+↑)" Width="30" Padding="0" Click="Up_Click"/>
                 <Button Grid.Column="3" x:Name="DrivesButton" Content="PC" ToolTip="내 PC · 드라이브 목록" Width="34"
                         Padding="0" Click="Drives_Click"/>
                 <Button Grid.Column="4" Content="바탕화면" Width="64" Padding="0" ToolTip="바탕화면 바로가기"
@@ -57,7 +64,7 @@
                     <Border x:Name="BreadcrumbSurface" Background="{DynamicResource PanelBackground}"
                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                             CornerRadius="4" MouseLeftButtonDown="BreadcrumbSurface_MouseLeftButtonDown"
-                            ToolTip="경로를 클릭해 이동, ✎ 또는 Ctrl+L로 직접 입력">
+                            ToolTip="경로를 클릭해 이동, ✎ 또는 Ctrl+L / Alt+D / F4로 직접 입력">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -72,7 +79,7 @@
                             </ScrollViewer>
                             <Button Grid.Column="1" Content="✎" Width="23" Padding="0"
                                     BorderThickness="0" Margin="0" MinHeight="0"
-                                    ToolTip="경로 직접 입력 (Ctrl+L)"
+                                    ToolTip="경로 직접 입력 (Ctrl+L, Alt+D, F4)"
                                     AutomationProperties.Name="경로 직접 입력"
                                     Click="EditAddress_Click"/>
                         </Grid>
@@ -83,7 +90,7 @@
                 </Grid>
                 <Button Grid.Column="6" Content="⌕" ToolTip="현재 폴더 필터 (Ctrl+F)" Width="30"
                         Padding="0" Click="ToggleFilter_Click"/>
-                <Button Grid.Column="7" Content="↻" ToolTip="새로 고침 (F5)" Width="30" Padding="0" Click="Refresh_Click"/>
+                <Button Grid.Column="7" Content="↻" ToolTip="새로 고침 (F5, Ctrl+R)" Width="30" Padding="0" Click="Refresh_Click"/>
             </Grid>
             <Grid Grid.Row="2" x:Name="FilterPanel" Margin="7,0,7,3" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
@@ -124,12 +131,6 @@
                           VirtualizingStackPanel.VirtualizationMode="Recycling"
                           TreeViewItem.Expanded="FolderTree_Expanded"
                           SelectedItemChanged="FolderTree_SelectedItemChanged">
-                    <TreeView.Resources>
-                        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}"
-                                         Color="{Binding Color, Source={StaticResource SelectionBrush}}"/>
-                        <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}"
-                                         Color="{Binding Color, Source={StaticResource SelectionBrush}}"/>
-                    </TreeView.Resources>
                 </TreeView>
                 <DataGrid x:Name="Files" Grid.Column="1" Margin="5,0"
                        AllowDrop="True"
@@ -167,6 +168,7 @@
                         <MenuItem Header="붙여넣기" Tag="Paste" InputGestureText="Ctrl+V" Click="FileCommand_Click"/>
                         <Separator/>
                         <MenuItem Header="삭제" Tag="Delete" InputGestureText="Delete" Click="FileCommand_Click"/>
+                        <MenuItem Header="영구 삭제" Tag="DeletePermanently" InputGestureText="Shift+Delete" Click="FileCommand_Click"/>
                     </ContextMenu>
                 </DataGrid.ContextMenu>
                 <DataGrid.Resources>
@@ -177,11 +179,34 @@
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
                             </Trigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True"/>
+                                    <Condition Binding="{Binding IsActivePane, RelativeSource={RelativeSource AncestorType={x:Type local:ExplorerPane}}}" Value="False"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Background" Value="{DynamicResource InactiveSelectionBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </MultiDataTrigger>
                         </Style.Triggers>
                     </Style>
                     <Style TargetType="DataGridCell">
                         <Setter Property="BorderThickness" Value="0"/>
                         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True"/>
+                                    <Condition Binding="{Binding IsActivePane, RelativeSource={RelativeSource AncestorType={x:Type local:ExplorerPane}}}" Value="False"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Background" Value="{DynamicResource InactiveSelectionBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </MultiDataTrigger>
+                        </Style.Triggers>
                     </Style>
                     <Style TargetType="DataGridColumnHeader">
                         <Setter Property="Background" Value="{DynamicResource CardBackground}"/>
@@ -195,7 +220,7 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">
-                                    <Grid Width="20" Height="20" Margin="2,0,7,0"
+                                    <Grid Width="22" Height="22" Margin="2,0,7,0"
                                           VerticalAlignment="Center">
                                         <Image x:Name="NativeFileIcon" Width="16" Height="16"
                                                Source="{Binding Converter={StaticResource ShellIconConverter}}"/>
@@ -213,6 +238,43 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+                                        <ContentControl Width="8" Height="8" Padding="0"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                                                        Focusable="False">
+                                            <ContentControl.Style>
+                                                <Style TargetType="ContentControl">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <!-- A null Git status must not render an empty
+                                                             badge background for ignored/non-Git files. -->
+                                                        <Trigger Property="Content" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ContentControl.Style>
+                                            <ContentControl.Content>
+                                                <MultiBinding Converter="{StaticResource GitStatusBadgeConverter}">
+                                                    <Binding Path="FullPath"/>
+                                                    <Binding Path="IsDirectory"/>
+                                                    <Binding Path="GitSnapshot" RelativeSource="{RelativeSource AncestorType={x:Type local:ExplorerPane}}"/>
+                                                </MultiBinding>
+                                            </ContentControl.Content>
+                                            <ContentControl.ContentTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{DynamicResource PanelBackground}"
+                                                            CornerRadius="2"
+                                                            ToolTip="{Binding Description}">
+                                                        <Viewbox Width="8" Height="8" Stretch="Uniform">
+                                                            <TextBlock Text="{Binding Symbol}"
+                                                                       Foreground="{Binding Color}"
+                                                                       FontSize="12" FontWeight="Bold"
+                                                                       TextAlignment="Center"/>
+                                                        </Viewbox>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ContentControl.ContentTemplate>
+                                        </ContentControl>
                                     </Grid>
                                     <TextBlock Text="{Binding Name}" ToolTip="{Binding Name}"
                                                VerticalAlignment="Center"/>

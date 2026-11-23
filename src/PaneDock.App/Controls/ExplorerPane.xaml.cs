@@ -5,6 +5,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -27,6 +28,7 @@ public partial class ExplorerPane : UserControl
     private int _tabCounter;
 
     public event EventHandler? Activated;
+    public event EventHandler? GlobalSearchRequested;
     public event EventHandler? SessionChanged;
     public event EventHandler? FolderSelectionChanged;
     public event Action<ExplorerPane, int>? MoveTabRequested;
@@ -74,6 +76,12 @@ public partial class ExplorerPane : UserControl
                 UpdateStatus();
             }
         };
+        _gitStatusTimer.Tick += (_, _) =>
+        {
+            if (IsVisible && !_disposed)
+                _ = RefreshGitStatusAsync();
+        };
+        _gitStatusTimer.Start();
         if (saved?.TabPaths is { Count: > 0 } paths)
         {
             for (var i = 0; i < paths.Count; i++)
@@ -130,10 +138,34 @@ public partial class ExplorerPane : UserControl
 
     public void SetActive(bool active)
     {
+        IsActivePane = active;
         OuterBorder.BorderBrush = active
             ? (Brush)FindResource("AccentBrush")
             : (Brush)FindResource("BorderBrush");
         OuterBorder.BorderThickness = active ? new Thickness(2) : new Thickness(1);
+
+        // The built-in WPF selection colors are light even in our Dark theme.
+        // Supply theme-aware colors to both the file grid and folder tree,
+        // including the no-keyboard-focus selection visual states.
+        var selectedBrush = (Brush)FindResource(active ? "SelectionBrush" : "InactiveSelectionBrush");
+        var inactiveBrush = (Brush)FindResource("InactiveSelectionBrush");
+        var foreground = (Brush)FindResource("TextPrimary");
+        foreach (var control in new Control[] { Files, FolderTree })
+        {
+            control.Resources[SystemColors.HighlightBrushKey] = selectedBrush;
+            control.Resources[SystemColors.InactiveSelectionHighlightBrushKey] = inactiveBrush;
+            control.Resources[SystemColors.HighlightTextBrushKey] = foreground;
+            control.Resources[SystemColors.InactiveSelectionHighlightTextBrushKey] = foreground;
+        }
+    }
+
+    public static readonly DependencyProperty IsActivePaneProperty =
+        DependencyProperty.Register(nameof(IsActivePane), typeof(bool), typeof(ExplorerPane));
+
+    public bool IsActivePane
+    {
+        get => (bool)GetValue(IsActivePaneProperty);
+        private set => SetValue(IsActivePaneProperty, value);
     }
 
     private ExplorerTab? SelectedTab => (Tabs.SelectedItem as TabItem)?.Tag as ExplorerTab;
@@ -387,6 +419,7 @@ public partial class ExplorerPane : UserControl
                 : null;
         UpdateStatus();
         _ = SyncFolderTreeAsync();
+        _ = RefreshGitStatusAsync();
     }
 
     private void UpdateStatus()
@@ -637,6 +670,7 @@ public partial class ExplorerPane : UserControl
         {
             InvalidateTree([tab.Path]);
             _ = NavigateAsync(tab, tab.Path, addHistory: false);
+            _ = RefreshGitStatusAsync(force: true);
         }
     }
 
@@ -705,61 +739,159 @@ public partial class ExplorerPane : UserControl
         }
     }
 
-    private void Pane_PreviewKeyDown(object sender, KeyEventArgs e)
+    // Called from the containing Window's PreviewKeyDown, not from the
+    // UserControl tunnel. A pane may be active even when the keyboard focus is
+    // on a breadcrumb, toolbar button, or tab header.
+    public bool TryHandleShortcut(KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        var ctrl = Keyboard.Modifiers == ModifierKeys.Control;
-        if (ctrl && key == Key.T)
-            AddTab(SelectedTab?.Path ?? ExplorerLocations.ThisPc);
-        else if (ctrl && key == Key.W && SelectedTab is { } current)
-            CloseTab(current);
-        else if (ctrl && key == Key.L)
-        {
-            BeginAddressEdit();
-        }
-        else if (ctrl && key == Key.F)
-        {
-            if (SelectedTab is { } tab)
-            {
-                tab.FilterVisible = true;
-                SetFilterVisible(true);
-                FilterBox.Focus();
-                FilterBox.SelectAll();
-                SessionChanged?.Invoke(this, EventArgs.Empty);
-            }
-        }
-        else if (Keyboard.Modifiers == ModifierKeys.Alt && key == Key.Left)
-            Back_Click(this, new RoutedEventArgs());
-        else if (Keyboard.Modifiers == ModifierKeys.Alt && key == Key.Right)
-            Forward_Click(this, new RoutedEventArgs());
-        else if (Keyboard.Modifiers == ModifierKeys.Alt && key == Key.Up)
-            Up_Click(this, new RoutedEventArgs());
-        else if (key == Key.F5 && Keyboard.Modifiers == ModifierKeys.None)
-            Refresh_Click(this, new RoutedEventArgs());
-        else if (key == Key.Escape && Address.IsVisible)
-        {
-            EndAddressEdit();
-        }
-        else if (key == Key.Escape && SelectedTab is { FilterVisible: true } active)
-        {
-            active.FilterVisible = false;
-            SetFilterVisible(false);
-            Files.Focus();
-            SessionChanged?.Invoke(this, EventArgs.Empty);
-        }
-        else if (Files.IsKeyboardFocusWithin)
-        {
-            if (key == Key.Enter)
-                OpenSelectedEntry();
-            else if (key == Key.Back)
-                Up_Click(this, new RoutedEventArgs());
-            else if (!HandleFileKey(key))
-                return;
-        }
-        else
-            return;
+        var modifiers = Keyboard.Modifiers;
 
-        e.Handled = true;
+        // Let the address bar and filter keep the native text-editing
+        // shortcuts (Backspace, Delete, Ctrl+A/C/X/V, cursor navigation).
+        // Escape is the one exception: it returns to the file list.
+        if (key == Key.Escape && modifiers == ModifierKeys.None)
+        {
+            if (Address.IsVisible)
+            {
+                EndAddressEdit();
+                Files.Focus();
+                return true;
+            }
+            else if (SelectedTab is { FilterVisible: true } active)
+            {
+                active.FilterVisible = false;
+                SetFilterVisible(false);
+                Files.Focus();
+                SessionChanged?.Invoke(this, EventArgs.Empty);
+                return true;
+            }
+            return false;
+        }
+
+        var source = e.OriginalSource as DependencyObject;
+        var editingText = Address.IsKeyboardFocusWithin || FilterBox.IsKeyboardFocusWithin
+            || (source is not null && FindParent<TextBoxBase>(source) is not null);
+        var action = ExplorerKeyboardShortcuts.Resolve(key, modifiers,
+            Files.IsKeyboardFocusWithin, editingText);
+        if (action == ExplorerShortcutAction.None)
+            return false;
+
+        switch (action)
+        {
+            case ExplorerShortcutAction.Back:
+                Back_Click(this, new RoutedEventArgs());
+                break;
+            case ExplorerShortcutAction.Forward:
+                Forward_Click(this, new RoutedEventArgs());
+                break;
+            case ExplorerShortcutAction.Up:
+                Up_Click(this, new RoutedEventArgs());
+                break;
+            case ExplorerShortcutAction.Refresh:
+                Refresh_Click(this, new RoutedEventArgs());
+                break;
+            case ExplorerShortcutAction.EditAddress:
+                BeginAddressEdit();
+                break;
+            case ExplorerShortcutAction.Filter:
+                if (SelectedTab is { } tab)
+                {
+                    tab.FilterVisible = true;
+                    SetFilterVisible(true);
+                    FilterBox.Focus();
+                    FilterBox.SelectAll();
+                    SessionChanged?.Invoke(this, EventArgs.Empty);
+                }
+                break;
+            case ExplorerShortcutAction.GlobalSearch:
+                GlobalSearchRequested?.Invoke(this, EventArgs.Empty);
+                break;
+            case ExplorerShortcutAction.NewTab:
+                AddTab(SelectedTab?.Path ?? ExplorerLocations.ThisPc);
+                break;
+            case ExplorerShortcutAction.CloseTab:
+                if (SelectedTab is { } current)
+                    CloseTab(current);
+                break;
+            case ExplorerShortcutAction.NextTab:
+                SelectAdjacentTab(1);
+                break;
+            case ExplorerShortcutAction.PreviousTab:
+                SelectAdjacentTab(-1);
+                break;
+            case ExplorerShortcutAction.FocusNextArea:
+                if (FolderTree.IsVisible && !FolderTree.IsKeyboardFocusWithin)
+                    FolderTree.Focus();
+                else
+                    Files.Focus();
+                break;
+            case ExplorerShortcutAction.NewFolder:
+                _ = RunFileCommandAsync(FileCommand.NewFolder);
+                break;
+            case ExplorerShortcutAction.NewFile:
+                _ = RunFileCommandAsync(FileCommand.NewFile);
+                break;
+            case ExplorerShortcutAction.Paste:
+                _ = RunFileCommandAsync(FileCommand.Paste);
+                break;
+            case ExplorerShortcutAction.SelectAll:
+                Files.SelectAll();
+                break;
+            case ExplorerShortcutAction.Open:
+                OpenSelectedEntry();
+                break;
+            case ExplorerShortcutAction.Rename:
+                _ = RunFileCommandAsync(FileCommand.Rename);
+                break;
+            case ExplorerShortcutAction.Cut:
+                _ = RunFileCommandAsync(FileCommand.Cut);
+                break;
+            case ExplorerShortcutAction.Copy:
+                _ = RunFileCommandAsync(FileCommand.Copy);
+                break;
+            case ExplorerShortcutAction.Delete:
+                _ = RunFileCommandAsync(FileCommand.Delete);
+                break;
+            case ExplorerShortcutAction.DeletePermanently:
+                _ = RunFileCommandAsync(FileCommand.DeletePermanently);
+                break;
+            case ExplorerShortcutAction.Properties:
+                ShowSelectedProperties();
+                break;
+            case ExplorerShortcutAction.ContextMenu:
+                ShowFileContextMenu();
+                break;
+        }
+        return true;
+    }
+
+    private void SelectAdjacentTab(int direction)
+    {
+        if (Tabs.Items.Count < 2)
+            return;
+        Tabs.SelectedIndex = (Tabs.SelectedIndex + direction + Tabs.Items.Count) % Tabs.Items.Count;
+        Files.Focus();
+    }
+
+    private void ShowSelectedProperties()
+    {
+        if (Files.SelectedItems.Count != 1 || Files.SelectedItem is not ExplorerEntry selected)
+            return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(selected.FullPath)
+            {
+                UseShellExecute = true,
+                Verb = "properties"
+            });
+        }
+        catch (Exception ex) when (ex is Win32Exception or IOException
+                                   or UnauthorizedAccessException or InvalidOperationException)
+        {
+            MessageBox.Show(Window.GetWindow(this), "속성을 열 수 없습니다.\n\n" + ex.Message,
+                "PaneDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private static T? FindParent<T>(DependencyObject? child) where T : DependencyObject
@@ -775,6 +907,12 @@ public partial class ExplorerPane : UserControl
 
     private void Activate_OnFocus(object sender, KeyboardFocusChangedEventArgs e) =>
         Activated?.Invoke(this, EventArgs.Empty);
+
+    private void Activate_OnMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!IsActivePane)
+            Activated?.Invoke(this, EventArgs.Empty);
+    }
 
     private sealed class ExplorerTab
     {

@@ -101,7 +101,10 @@ public partial class ExplorerPane
                     if (foldersChanged)
                         InvalidateTree([path]);
                     if (ReferenceEquals(SelectedTab, tab))
+                    {
                         UpdateStatus();
+                        _ = RefreshGitStatusAsync();
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -194,6 +197,8 @@ public partial class ExplorerPane
             return;
         _disposed = true;
         _filterTimer.Stop();
+        _gitStatusTimer.Stop();
+        _gitRequestVersion++;
         foreach (var tab in _tabs)
             tab.Dispose();
     }

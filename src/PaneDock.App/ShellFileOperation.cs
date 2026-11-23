@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace PaneDock.App;
 
-internal enum FileCommand { NewFolder, NewFile, Rename, Cut, Copy, Paste, Delete }
+internal enum FileCommand { NewFolder, NewFile, Rename, Cut, Copy, Paste, Delete, DeletePermanently }
 
 internal static class ShellFileOperation
 {
@@ -39,8 +39,7 @@ internal static class ShellFileOperation
         try
         {
             operation.SetOwnerWindow(owner);
-            operation.SetOperationFlags(AddUndoRecord
-                | (command == FileCommand.Delete ? RecycleOnDelete | WarnBeforePermanentDelete : 0));
+            operation.SetOperationFlags(GetOperationFlags(command));
 
             IShellItem GetItem(string path)
             {
@@ -72,6 +71,7 @@ internal static class ShellFileOperation
                         operation.MoveItem(item, destination!, null, 0);
                         break;
                     case FileCommand.Delete:
+                    case FileCommand.DeletePermanently:
                         operation.DeleteItem(item, 0);
                         break;
                 }
@@ -94,6 +94,14 @@ internal static class ShellFileOperation
                 Marshal.ReleaseComObject(item);
         }
     }
+
+    internal static uint GetOperationFlags(FileCommand command) => command switch
+    {
+        FileCommand.Delete => AddUndoRecord | RecycleOnDelete | WarnBeforePermanentDelete,
+        // Shift+Delete must not request recycling or add a misleading undo record.
+        FileCommand.DeletePermanently => WarnBeforePermanentDelete,
+        _ => AddUndoRecord
+    };
 
     internal static bool IsUserCancellation(Exception ex) =>
         ex is OperationCanceledException

@@ -11,6 +11,7 @@
         <SolidColorBrush x:Key="TextSecondary" Color="#52667E"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#1973C8"/>
         <SolidColorBrush x:Key="SelectionBrush" Color="#C7E3FF"/>
+        <SolidColorBrush x:Key="InactiveSelectionBrush" Color="#E5EDF6"/>
         <Style TargetType="Window">
             <Setter Property="Background" Value="{DynamicResource WindowBackground}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
