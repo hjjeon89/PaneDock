@@ -25,6 +25,8 @@
              Link="ExplorerItemSort.cs" />
     <Compile Include="..\..\src\PaneDock.App\Controls\ExplorerNameNavigation.cs"
              Link="ExplorerNameNavigation.cs" />
+    <Compile Include="..\..\src\PaneDock.App\Controls\WindowWorkArea.cs"
+             Link="WindowWorkArea.cs" />
     <Compile Include="..\..\src\PaneDock.App\Controls\ShortcutHelpCatalog.cs"
              Link="ShortcutHelpCatalog.cs" />
     <Using Include="System.IO" />

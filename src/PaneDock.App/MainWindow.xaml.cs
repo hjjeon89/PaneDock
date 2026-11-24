@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using PaneDock.App.Controls;
@@ -71,6 +72,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        SourceInitialized += (_, _) =>
+        {
+            var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+            source?.AddHook(WindowWorkArea.ConstrainMaximize);
+        };
         ShortcutHelpGroupsList.ItemsSource = ShortcutHelpCatalog.Groups;
         SearchPanel.OwnerWindow = this;
         var session = _sessionStore.Load();
