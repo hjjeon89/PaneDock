@@ -182,18 +182,73 @@ public sealed class ShellFileOperationDetailedTests
             var file = Path.Combine(source.FullName, "standalone.txt");
             File.WriteAllText(file, "standalone");
 
+            var completedNotifications = new List<int>();
             var result = await ShellFileOperation.RunDetailedAsync(
                 0, FileCommand.Copy, destination.FullName,
-                [Path.Combine(source.FullName, "Folder"), file]);
+                [Path.Combine(source.FullName, "Folder"), file],
+                onItemCompleted: completedNotifications.Add);
 
             Assert.IsTrue(result.Succeeded, result.ToString());
             Assert.AreEqual(2, result.CompletedItems);
+            CollectionAssert.AreEqual(new[] { 1, 2 }, completedNotifications,
+                "The real Shell must never notify completion for unselected descendants.");
             Assert.AreEqual(4, Directory.EnumerateFiles(
                 Path.Combine(destination.FullName, "Folder"), "*.txt",
                 SearchOption.AllDirectories).Count());
             Assert.AreEqual("standalone",
                 File.ReadAllText(Path.Combine(destination.FullName, "standalone.txt")));
             Assert.IsTrue(File.Exists(file), "Copy must not remove the source file.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [TestMethod]
+    public void InterruptedRecursiveCopyDoesNotCountDescendantsAsCompletedSelections()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var folder = Directory.CreateDirectory(Path.Combine(root, "folder")).FullName;
+            var first = Path.Combine(root, "first.txt");
+            var last = Path.Combine(root, "last.txt");
+            var progress = new ShellFileOperation.SelectedItemProgress(
+                [first, folder, last], recursive: true);
+            progress.Record(first, 0);
+            progress.Record(folder, 0x00270006); // Destination folder created/merged.
+            for (var i = 0; i < 20; i++)
+                progress.Record(Path.Combine(folder, $"child-{i}.txt"), 0);
+            progress.Record(Path.Combine(folder, "unfinished.txt"), unchecked((int)0x800704C7));
+
+            var stopped = progress.GetCounts(false);
+            Assert.AreEqual((1, 0, 0, 1), stopped);
+            var result = new ShellFileOperationResult(3, stopped.Completed,
+                stopped.Failed, true, true, UnconfirmedFolders: stopped.UnconfirmedFolders);
+            Assert.IsFalse(result.Succeeded);
+            StringAssert.Contains(result.Describe(FileCommand.Copy), "2개 미완료");
+            StringAssert.Contains(result.Describe(FileCommand.Copy), "폴더 1개 완료 미확인");
+
+            progress.Record(last, 0);
+            Assert.AreEqual((3, 0, 0, 0), progress.GetCounts(true));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [TestMethod]
+    public void DescendantFailuresAndSkipsAreAttributedOnlyToTheirSelectedFolder()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var folder = Directory.CreateDirectory(Path.Combine(root, "folder")).FullName;
+            var skipped = Directory.CreateDirectory(Path.Combine(root, "skipped")).FullName;
+            var progress = new ShellFileOperation.SelectedItemProgress(
+                [folder, skipped], recursive: true);
+            progress.Record(folder, 0);
+            progress.Record(Path.Combine(folder, "a.txt"), unchecked((int)0x80070005));
+            progress.Record(Path.Combine(folder, "b.txt"), unchecked((int)0x80070020));
+            progress.Record(skipped, 0);
+            progress.Record(Path.Combine(skipped, "c.txt"), 0x00270005);
+            Assert.AreEqual((0, 1, 1, 0), progress.GetCounts(false));
         }
         finally { Directory.Delete(root, recursive: true); }
     }

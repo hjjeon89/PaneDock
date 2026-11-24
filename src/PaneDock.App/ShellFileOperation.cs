@@ -7,7 +7,8 @@ internal enum FileCommand { NewFolder, NewFile, Rename, Cut, Copy, Paste, Delete
 
 internal sealed record ShellFileOperationResult(
     int RequestedItems, int CompletedItems, int FailedItems,
-    bool WasAborted, bool WasCanceled, string? Error = null, int SkippedItems = 0)
+    bool WasAborted, bool WasCanceled, string? Error = null, int SkippedItems = 0,
+    int UnconfirmedFolders = 0)
 {
     public bool Succeeded => !WasAborted && !WasCanceled && Error is null
         && FailedItems == 0 && SkippedItems == 0 && CompletedItems == RequestedItems;
@@ -31,8 +32,10 @@ internal sealed record ShellFileOperationResult(
             ? "오류 발생"
             : WasCanceled || WasAborted ? "취소 또는 중단됨"
             : SkippedItems > 0 ? "건너뛴 항목 포함" : "일부 항목 미완료";
+        var folderNote = UnconfirmedFolders > 0
+            ? $" · 폴더 {UnconfirmedFolders:N0}개 완료 미확인 (내부 항목 확인 필요)" : "";
         return $"{RequestedItems:N0}개 중 {CompletedItems:N0}개 {operation} 완료"
-            + $" · {remaining:N0}개 미완료 ({reason})";
+            + $" · {remaining:N0}개 미완료 ({reason})" + folderNote;
     }
 }
 
@@ -78,9 +81,17 @@ internal static class ShellFileOperation
         if (cancellation.IsCancellationRequested)
             return new ShellFileOperationResult(requested, 0, 0, false, true);
 
+        // Folder creation/rename are single-item operations. Recursive
+        // transfers/deletion must not count descendant callbacks as selections.
+        var roots = command == FileCommand.NewFolder
+            ? [Path.Combine(folder, name!)] : paths;
+        var progress = new SelectedItemProgress(roots,
+            command is FileCommand.Copy or FileCommand.Cut or FileCommand.Delete
+                or FileCommand.DeletePermanently);
         var operation = (IFileOperation)new FileOperation();
         var items = new List<IShellItem>();
-        var sink = new ProgressSink(cancellation, onItemCompleted);
+        var sink = new ProgressSink(cancellation, onItemCompleted, progress,
+            command == FileCommand.NewFolder ? roots[0] : null);
         uint adviseCookie = 0;
         try
         {
@@ -142,8 +153,6 @@ internal static class ShellFileOperation
                 catch (COMException) { aborted = true; }
             }
 
-            var completed = Math.Min(requested, sink.Completed);
-            var failed = Math.Min(requested - completed, sink.Failed);
             var canceled = cancellation.IsCancellationRequested || sink.WasCanceled
                 || operationError is not null && IsUserCancellation(operationError);
             // PerformOperations can return S_OK even when one queued item
@@ -153,8 +162,13 @@ internal static class ShellFileOperation
             var error = operationError is not null && !IsUserCancellation(operationError)
                 ? operationError.Message
                 : sink.FirstErrorHResult is { } hr ? DescribeShellFailure(hr) : null;
-            return new ShellFileOperationResult(requested, completed, failed,
-                aborted, canceled, error, Math.Min(requested - completed, sink.Skipped));
+            // A recursive directory's successful PostCopyItem can mean only
+            // that its destination directory was created. If the Shell
+            // aborted, never infer that all of its children were transferred.
+            var counts = progress.GetCounts(!aborted && !canceled && error is null);
+            sink.NotifyCompleted(counts.Completed);
+            return new ShellFileOperationResult(requested, counts.Completed, counts.Failed,
+                aborted, canceled, error, counts.Skipped, counts.UnconfirmedFolders);
         }
         finally
         {
@@ -191,6 +205,101 @@ internal static class ShellFileOperation
         return $"{(string.IsNullOrWhiteSpace(detail) ? "Windows 파일 작업 실패" : detail)} (0x{unchecked((uint)hr):X8})";
     }
 
+    // Count each requested top-level path once. Descendant errors affect
+    // their selected ancestor, but descendant success never completes it.
+    internal sealed class SelectedItemProgress
+    {
+        private sealed class Item(bool recursiveFolder)
+        {
+            public bool RecursiveFolder { get; } = recursiveFolder;
+            public bool Succeeded { get; set; }
+            public bool Failed { get; set; }
+            public bool Skipped { get; set; }
+        }
+
+        private readonly Dictionary<string, Item> _items;
+
+        internal SelectedItemProgress(IEnumerable<string> paths, bool recursive)
+        {
+            _items = new(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in paths)
+            {
+                var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+                _items.TryAdd(fullPath, new Item(recursive && Directory.Exists(fullPath)));
+            }
+        }
+
+        internal void Record(string? path, int result)
+        {
+            if (string.IsNullOrEmpty(path))
+                return;
+            var current = Path.TrimEndingDirectorySeparator(path);
+            var isTopLevel = _items.TryGetValue(current, out var item);
+            while (item is null)
+            {
+                var parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(parent) || parent == current)
+                    return;
+                current = parent;
+                _items.TryGetValue(current, out item);
+            }
+
+            if (ProgressSink.IsCompletedItemResult(result))
+            {
+                if (isTopLevel)
+                    item.Succeeded = true;
+            }
+            else if (IsCancellationResult(result))
+                return;
+            else if (result < 0)
+                item.Failed = true;
+            else
+                item.Skipped = true;
+        }
+
+        internal (int Completed, int Failed, int Skipped, int UnconfirmedFolders)
+            GetCounts(bool finishedNormally)
+        {
+            var completed = 0;
+            var failed = 0;
+            var skipped = 0;
+            var unconfirmed = 0;
+            foreach (var item in _items.Values)
+            {
+                if (item.Failed) failed++;
+                else if (item.Skipped) skipped++;
+                else if (item.Succeeded)
+                {
+                    if (item.RecursiveFolder && !finishedNormally)
+                        unconfirmed++;
+                    else
+                        completed++;
+                }
+            }
+            return (completed, failed, skipped, unconfirmed);
+        }
+    }
+
+    private static bool IsCancellationResult(int hr) => hr is
+        unchecked((int)0x800704C7) or unchecked((int)0x80004004)
+        or unchecked((int)0x80270000) or unchecked((int)0x80270001);
+
+    private static string? GetItemPath(IShellItem? item)
+    {
+        if (item is null) return null;
+        nint name = 0;
+        try
+        {
+            item.GetDisplayName(0x80058000, out name); // SIGDN_FILESYSPATH
+            return Marshal.PtrToStringUni(name);
+        }
+        catch (COMException) { return null; }
+        finally
+        {
+            if (name != 0) Marshal.FreeCoTaskMem(name);
+        }
+    }
+
     // IFileOperationProgressSink receives the HRESULT for each completed
     // item, unlike PerformOperations (which can return S_OK on cancellation).
     [ComVisible(true)]
@@ -201,16 +310,16 @@ internal static class ShellFileOperation
         [PreserveSig] int StartOperations();
         [PreserveSig] int FinishOperations(int result);
         [PreserveSig] int PreRenameItem(uint flags, nint item, [MarshalAs(UnmanagedType.LPWStr)] string? name);
-        [PreserveSig] int PostRenameItem(uint flags, nint item, [MarshalAs(UnmanagedType.LPWStr)] string? name,
+        [PreserveSig] int PostRenameItem(uint flags, [MarshalAs(UnmanagedType.Interface)] IShellItem item, [MarshalAs(UnmanagedType.LPWStr)] string? name,
             int result, nint created);
         [PreserveSig] int PreMoveItem(uint flags, nint item, nint folder, [MarshalAs(UnmanagedType.LPWStr)] string? name);
-        [PreserveSig] int PostMoveItem(uint flags, nint item, nint folder,
+        [PreserveSig] int PostMoveItem(uint flags, [MarshalAs(UnmanagedType.Interface)] IShellItem item, nint folder,
             [MarshalAs(UnmanagedType.LPWStr)] string? name, int result, nint created);
         [PreserveSig] int PreCopyItem(uint flags, nint item, nint folder, [MarshalAs(UnmanagedType.LPWStr)] string? name);
-        [PreserveSig] int PostCopyItem(uint flags, nint item, nint folder,
+        [PreserveSig] int PostCopyItem(uint flags, [MarshalAs(UnmanagedType.Interface)] IShellItem item, nint folder,
             [MarshalAs(UnmanagedType.LPWStr)] string? name, int result, nint created);
         [PreserveSig] int PreDeleteItem(uint flags, nint item);
-        [PreserveSig] int PostDeleteItem(uint flags, nint item, int result, nint created);
+        [PreserveSig] int PostDeleteItem(uint flags, [MarshalAs(UnmanagedType.Interface)] IShellItem item, int result, nint created);
         [PreserveSig] int PreNewItem(uint flags, nint folder, [MarshalAs(UnmanagedType.LPWStr)] string? name);
         [PreserveSig] int PostNewItem(uint flags, nint folder,
             [MarshalAs(UnmanagedType.LPWStr)] string? name,
@@ -222,15 +331,12 @@ internal static class ShellFileOperation
     }
 
     [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
-    private sealed class ProgressSink(CancellationToken cancellation, Action<int>? onItemCompleted)
+    private sealed class ProgressSink(CancellationToken cancellation, Action<int>? onItemCompleted,
+        SelectedItemProgress progress, string? newItemPath)
         : IFileOperationProgressSink
     {
         private const int Cancelled = unchecked((int)0x800704C7);
-        private const int CopyEngineUserCancelled = unchecked((int)0x80270000);
-        private const int CopyEngineCancelled = unchecked((int)0x80270001);
-        internal int Completed { get; private set; }
-        internal int Failed { get; private set; }
-        internal int Skipped { get; private set; }
+        private int _notifiedCompleted;
         internal bool WasCanceled { get; private set; }
         internal int? FirstErrorHResult { get; private set; }
 
@@ -241,29 +347,31 @@ internal static class ShellFileOperation
             return Cancelled;
         }
 
-        private int Record(int hr)
+        internal void NotifyCompleted(int count)
+        {
+            if (onItemCompleted is null) return;
+            while (_notifiedCompleted < count)
+            {
+                _notifiedCompleted++;
+                try { onItemCompleted(_notifiedCompleted); }
+                catch (Exception) { }
+            }
+        }
+
+        private int Record(string? path, int hr)
         {
             // Shell post-item HRESULTs need not be S_OK. A successful folder
             // transfer/rename often reports COPYENGINE_S_DONT_PROCESS_CHILDREN.
             // USER_IGNORED and PENDING, however, must never count as copied.
-            if (IsCompletedItemResult(hr))
-            {
-                Completed++;
-                // This notification is useful for deterministic cancellation
-                // regression tests. Never let a client callback abort COM.
-                try { onItemCompleted?.Invoke(Completed); }
-                catch (Exception) { }
-            }
-            else if (hr is Cancelled or CopyEngineUserCancelled or CopyEngineCancelled
-                     or unchecked((int)0x80004004))
+            if (IsCancellationResult(hr))
                 WasCanceled = true;
             else if (hr < 0)
-            {
-                Failed++;
                 FirstErrorHResult ??= hr;
-            }
-            else
-                Skipped++;
+            progress.Record(path, hr);
+            // Only confirmed top-level non-recursive items are reported
+            // during the operation. Recursive folders are confirmed at finish.
+            if (onItemCompleted is not null)
+                NotifyCompleted(progress.GetCounts(false).Completed);
             return 0; // Callbacks must not accidentally cancel pending work.
         }
 
@@ -278,23 +386,23 @@ internal static class ShellFileOperation
         public int StartOperations() => CheckCancellation();
         public int FinishOperations(int result)
         {
-            if (result is Cancelled or CopyEngineUserCancelled or CopyEngineCancelled)
+            if (IsCancellationResult(result))
                 WasCanceled = true;
             else if (result < 0)
                 FirstErrorHResult ??= result;
             return 0;
         }
         public int PreRenameItem(uint flags, nint item, string? name) => CheckCancellation();
-        public int PostRenameItem(uint flags, nint item, string? name, int result, nint created) => Record(result);
+        public int PostRenameItem(uint flags, IShellItem item, string? name, int result, nint created) => Record(GetItemPath(item), result);
         public int PreMoveItem(uint flags, nint item, nint folder, string? name) => CheckCancellation();
-        public int PostMoveItem(uint flags, nint item, nint folder, string? name, int result, nint created) => Record(result);
+        public int PostMoveItem(uint flags, IShellItem item, nint folder, string? name, int result, nint created) => Record(GetItemPath(item), result);
         public int PreCopyItem(uint flags, nint item, nint folder, string? name) => CheckCancellation();
-        public int PostCopyItem(uint flags, nint item, nint folder, string? name, int result, nint created) => Record(result);
+        public int PostCopyItem(uint flags, IShellItem item, nint folder, string? name, int result, nint created) => Record(GetItemPath(item), result);
         public int PreDeleteItem(uint flags, nint item) => CheckCancellation();
-        public int PostDeleteItem(uint flags, nint item, int result, nint created) => Record(result);
+        public int PostDeleteItem(uint flags, IShellItem item, int result, nint created) => Record(GetItemPath(item), result);
         public int PreNewItem(uint flags, nint folder, string? name) => CheckCancellation();
         public int PostNewItem(uint flags, nint folder, string? name,
-            string? template, uint attributes, int result, nint created) => Record(result);
+            string? template, uint attributes, int result, nint created) => Record(newItemPath, result);
         public int UpdateProgress(uint total, uint completed) => CheckCancellation();
         public int ResetTimer() => 0;
         public int PauseTimer() => 0;
@@ -306,7 +414,12 @@ internal static class ShellFileOperation
         string path, nint bindContext, in Guid id, out IShellItem item);
 
     [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IShellItem { }
+    private interface IShellItem
+    {
+        void BindToHandler(nint bindContext, in Guid handler, in Guid iid, out nint result);
+        void GetParent(out IShellItem parent);
+        void GetDisplayName(uint displayName, out nint name);
+    }
 
     [ComImport, Guid("3ad05575-8857-4850-9277-11b85bdb8e09")]
     private class FileOperation { }
