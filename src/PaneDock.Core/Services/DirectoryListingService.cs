@@ -8,7 +8,8 @@ namespace PaneDock.Core.Services;
 /// </summary>
 public sealed class DirectoryListingService
 {
-    private const int BatchSize = 256;
+    private const int InitialBatchSize = 256;
+    private const int MaxBatchSize = 16_384;
 
     /// <summary>
     /// Captures an entire directory off the UI thread. Used for change diffs
@@ -69,7 +70,11 @@ public sealed class DirectoryListingService
                 return;
             }
 
-            var batch = new List<ExplorerEntry>(BatchSize);
+            // Start quickly, then reduce CollectionChanged resets as the
+            // directory grows. Fixed 256-item batches made 100k files trigger
+            // nearly 400 expensive WPF view refreshes.
+            var batchSize = InitialBatchSize;
+            var batch = new List<ExplorerEntry>(batchSize);
 
             foreach (var info in new DirectoryInfo(path).EnumerateFileSystemInfos())
             {
@@ -79,11 +84,12 @@ public sealed class DirectoryListingService
                     continue;
 
                 batch.Add(item);
-                if (batch.Count < BatchSize)
+                if (batch.Count < batchSize)
                     continue;
 
                 progress.Report(batch.ToArray());
-                batch.Clear();
+                batchSize = Math.Min(batchSize * 2, MaxBatchSize);
+                batch = new List<ExplorerEntry>(batchSize);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
