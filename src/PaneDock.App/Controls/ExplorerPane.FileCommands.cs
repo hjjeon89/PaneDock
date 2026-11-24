@@ -19,6 +19,7 @@ public partial class ExplorerPane
     private readonly DispatcherTimer _fileFeedbackTimer =
         new() { Interval = TimeSpan.FromSeconds(8) };
     private string? _fileFeedback;
+    private bool _shellMenuOpen;
 
     // Folder watchers refresh the file count immediately after an operation.
     // Keep the actual copy/move/delete outcome visible long enough to read it.
@@ -67,7 +68,12 @@ public partial class ExplorerPane
     }
 
     private void Files_ContextMenuOpening(object sender, ContextMenuEventArgs e)
-        => UpdateFileContextMenu();
+    {
+        if (TryShowShellMenu(e.CursorLeft < 0 || e.CursorTop < 0))
+            e.Handled = true;
+        else
+            UpdateFileContextMenu();
+    }
 
     private void UpdateFileContextMenu()
     {
@@ -78,11 +84,79 @@ public partial class ExplorerPane
 
     private void ShowFileContextMenu()
     {
+        if (TryShowShellMenu(keyboard: true))
+            return;
         if (Files.ContextMenu is not { } menu)
             return;
         UpdateFileContextMenu();
         menu.PlacementTarget = Files;
         menu.IsOpen = true;
+    }
+
+    private bool TryShowShellMenu(bool keyboard)
+    {
+        if (_shellMenuOpen || _fileOperationRunning)
+            return true;
+        if (_disposed || SelectedTab is not { Path.Length: > 0, IsCheckingPath: false } tab ||
+            PresentationSource.FromVisual(this) is not HwndSource source)
+            return false;
+
+        var folder = tab.Path;
+        var entries = Files.SelectedItems.OfType<ExplorerEntry>().ToArray();
+        var paths = entries.Select(entry => entry.FullPath).ToArray();
+        var commands = Files.ContextMenu.Items.OfType<MenuItem>()
+            .Where(item => item.Tag is string tag && Enum.TryParse<FileCommand>(tag, out _))
+            .Select(item =>
+            {
+                var action = Enum.Parse<FileCommand>((string)item.Tag);
+                var label = item.Header.ToString() ?? action.ToString();
+                if (!string.IsNullOrEmpty(item.InputGestureText))
+                    label += "\t" + item.InputGestureText;
+                return new ShellContextMenuService.Command(action, label, CanRunFileCommand(action));
+            }).ToArray();
+        var anchor = keyboard && Files.SelectedItem is not null
+            ? (Files.ItemContainerGenerator.ContainerFromItem(Files.SelectedItem) as FrameworkElement ?? Files)
+            : Files;
+        var position = keyboard ? new Point(12, Math.Min(anchor.ActualHeight, 28)) : Mouse.GetPosition(Files);
+        var point = anchor.PointToScreen(position);
+        ShellContextMenuService.Result result;
+        _shellMenuOpen = true;
+        try
+        {
+            result = ShellContextMenuService.Show(source, folder, paths, (int)point.X, (int)point.Y,
+                !keyboard && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift), commands,
+                entries.Length == 1 && entries[0].IsDirectory);
+        }
+        finally { _shellMenuOpen = false; }
+
+        if (result.Error is { } error)
+        {
+            ShowFileFeedback(result.Shown ? "Windows 메뉴 명령 오류: " + error
+                : "Windows 메뉴를 열 수 없어 기본 메뉴 사용: " + error);
+        }
+        if (!result.Shown)
+            return false;
+
+        // A nested native menu loop may process a directory refresh.
+        // Never execute a PaneDock command against a different selection.
+        var sameSelection = !_disposed && ReferenceEquals(SelectedTab, tab) &&
+            SamePath(tab.Path, folder) && paths.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                .SetEquals(Files.SelectedItems.OfType<ExplorerEntry>().Select(entry => entry.FullPath));
+        if (sameSelection && result.Action is { } action)
+        {
+            if (CanRunFileCommand(action))
+                _ = RunFileCommandAsync(action,
+                    result.PasteIntoSelection ? entries[0].FullPath : null);
+            else
+                ShowFileFeedback("현재 위치에서는 해당 파일 작업을 사용할 수 없습니다.");
+        }
+        else if (sameSelection && result.OpenFolder)
+            OpenSelectedEntry();
+        else if (result.Action is not null || result.OpenFolder)
+            ShowFileFeedback("메뉴를 연 동안 선택 항목이 변경되어 명령을 실행하지 않았습니다.");
+        if (result.NativeInvoked)
+            FileLocationsChanged?.Invoke([folder]);
+        return true;
     }
 
     private void Files_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -104,7 +178,7 @@ public partial class ExplorerPane
             await RunFileCommandAsync(command);
     }
 
-    private async Task RunFileCommandAsync(FileCommand command)
+    private async Task RunFileCommandAsync(FileCommand command, string? pasteFolder = null)
     {
         if (!CanRunFileCommand(command) || SelectedTab is not { } tab || Window.GetWindow(this) is not { } owner)
             return;
@@ -113,7 +187,8 @@ public partial class ExplorerPane
         try
         {
             var selected = Files.SelectedItems.OfType<ExplorerEntry>().ToArray();
-            var folder = tab.Path;
+            var folder = command == FileCommand.Paste && pasteFolder is not null
+                ? pasteFolder : tab.Path;
             if (command is FileCommand.Copy or FileCommand.Cut)
             {
                 var files = new StringCollection();

@@ -15,6 +15,7 @@
              Link="Everything64.dll" CopyToOutputDirectory="PreserveNewest" />
     <!-- Verify the actual Shell implementation without adding a WPF dependency to Core. -->
     <Compile Include="..\..\src\PaneDock.App\ShellFileOperation.cs" Link="ShellFileOperation.cs" />
+    <Compile Include="..\..\src\PaneDock.App\ShellContextMenuService.cs" Link="ShellContextMenuService.cs" />
     <Compile Include="..\..\src\PaneDock.App\Controls\ShellIconConverter.cs"
              Link="ShellIconConverter.cs" />
     <Compile Include="..\..\src\PaneDock.App\Controls\GitStatusBadgeConverter.cs"

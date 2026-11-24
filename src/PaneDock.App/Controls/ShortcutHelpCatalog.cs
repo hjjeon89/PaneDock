@@ -39,7 +39,7 @@ internal static class ShortcutHelpCatalog
             new("Ctrl+Shift+N", "새 폴더", ExplorerShortcutAction.NewFolder),
             new("Ctrl+Alt+N", "새 파일", ExplorerShortcutAction.NewFile),
             new("Alt+Enter", "선택 항목 속성", ExplorerShortcutAction.Properties),
-            new("Shift+F10", "파일 메뉴 열기", ExplorerShortcutAction.ContextMenu)
+            new("Shift+F10", "Windows Shell 파일 메뉴 열기", ExplorerShortcutAction.ContextMenu)
         ]),
         new("탭 관리",
         [
