@@ -13,35 +13,82 @@ namespace PaneDock.Core.Services;
 /// </summary>
 public sealed class EverythingIndexedSearchService
 {
+    public enum Availability
+    {
+        Ready,
+        MissingSdk,
+        NotRunning,
+        ServiceOnly,
+        IpcUnavailable,
+        IndexNotLoaded
+    }
+
     private static readonly object QueryGate = new();
     private const uint RequestFlags = 0x01 | 0x02 | 0x10 | 0x40;
 
-    public bool IsAvailable
+    public bool IsAvailable => CheckAvailability() == Availability.Ready;
+
+    public Availability CheckAvailability()
     {
-        get
+        if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess
+            || !File.Exists(Path.Combine(AppContext.BaseDirectory, "Everything64.dll")))
+            return Availability.MissingSdk;
+
+        Process[] processes;
+        try
         {
-            if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess
-                || !File.Exists(Path.Combine(AppContext.BaseDirectory, "Everything64.dll")))
-                return false;
-            try
+            processes = Process.GetProcessesByName("Everything");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return Availability.IpcUnavailable;
+        }
+        try
+        {
+            if (processes.Length == 0)
+                return Availability.NotRunning;
+            lock (QueryGate)
             {
-                // A running process is not enough: the optional IPC endpoint
-                // might be unavailable or its database may still be loading.
-                // The SDK reports version 0 when IPC cannot be reached.
-                if (Process.GetProcessesByName("Everything").Length == 0)
-                    return false;
-                lock (QueryGate)
-                    return Native.GetMajorVersion() > 0 && Native.IsDbLoaded();
-            }
-            catch (Exception ex) when (ex is InvalidOperationException
-                                       or System.ComponentModel.Win32Exception
-                                       or DllNotFoundException or EntryPointNotFoundException
-                                       or BadImageFormatException)
-            {
-                return false;
+                if (Native.GetMajorVersion() == 0)
+                {
+                    // The service can be running in session 0 without an IPC
+                    // endpoint accessible from the desktop user's session.
+                    using var currentProcess = Process.GetCurrentProcess();
+                    var session = currentProcess.SessionId;
+                    return processes.All(process => process.SessionId != session)
+                        ? Availability.ServiceOnly : Availability.IpcUnavailable;
+                }
+                return Native.IsDbLoaded() ? Availability.Ready : Availability.IndexNotLoaded;
             }
         }
+        catch (Exception ex) when (ex is InvalidOperationException
+                                   or System.ComponentModel.Win32Exception
+                                   or DllNotFoundException or EntryPointNotFoundException
+                                   or BadImageFormatException)
+        {
+            return Availability.IpcUnavailable;
+        }
+        finally
+        {
+            foreach (var process in processes)
+                process.Dispose();
+        }
     }
+
+    public static string DescribeUnavailable(Availability state) => state switch
+    {
+        Availability.ServiceOnly =>
+            "Everything 서비스만 실행 중입니다. 사용자 세션에서 Everything 앱을 실행하면 빠른 검색을 사용할 수 있습니다.",
+        Availability.NotRunning =>
+            "Everything이 실행되지 않았습니다. Everything 앱을 실행하면 빠른 검색을 사용할 수 있습니다.",
+        Availability.IndexNotLoaded =>
+            "Everything 인덱스가 아직 준비되지 않았습니다. 인덱스 로딩 완료 후 다시 검색하세요.",
+        Availability.MissingSdk =>
+            "Everything SDK가 없습니다. 인덱스 검색을 사용할 수 없습니다.",
+        Availability.IpcUnavailable =>
+            "Everything IPC 연결이 불가능합니다. Everything 실행 상태와 IPC 설정을 확인하세요.",
+        _ => ""
+    };
 
     /// <summary>
     /// Returns null if the Everything IPC endpoint/DLL is unavailable.

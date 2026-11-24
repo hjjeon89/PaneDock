@@ -292,12 +292,14 @@ public partial class ExplorerPane : UserControl
             UpdateStatus();
 
         string fullPath;
+        var available = true;
         try
         {
             fullPath = ExplorerLocations.IsThisPc(path) || string.Equals(path.Trim(), "내 PC", StringComparison.Ordinal)
                 ? ExplorerLocations.ThisPc : Path.GetFullPath(path);
-            if (!ExplorerLocations.IsThisPc(fullPath)
-                && !await Task.Run(() => Directory.Exists(fullPath), token))
+            if (!ExplorerLocations.IsThisPc(fullPath))
+                available = await Task.Run(() => Directory.Exists(fullPath), token);
+            if (!available && !NetworkPathService.ShouldWaitForReconnect(fullPath, available))
                 throw new DirectoryNotFoundException($"폴더를 찾을 수 없습니다: {fullPath}");
         }
         catch (OperationCanceledException)
@@ -335,8 +337,14 @@ public partial class ExplorerPane : UserControl
             tab.View.Refresh();
             SessionChanged?.Invoke(this, EventArgs.Empty);
         }
-        tab.Items.Clear();
-        tab.SelectedEntries.Clear();
+        // When a share becomes temporarily unavailable, keep the last
+        // snapshot and selection. Never turn a disconnected tab into an
+        // apparently empty folder (or replace its saved path with "내 PC").
+        if (available || !SamePath(tab.Path, fullPath))
+        {
+            tab.Items.Clear();
+            tab.SelectedEntries.Clear();
+        }
         tab.Path = fullPath;
         tab.RequestedPath = fullPath;
         tab.HeaderLabel.Text = ExplorerLocations.IsThisPc(fullPath)
@@ -357,6 +365,15 @@ public partial class ExplorerPane : UserControl
         if (ReferenceEquals(SelectedTab, tab))
             ShowTab(tab);
         SessionChanged?.Invoke(this, EventArgs.Empty);
+
+        if (!available)
+        {
+            tab.Error = "네트워크 폴더 연결 대기 중 · 연결이 복구되면 자동으로 다시 읽습니다 (F5: 즉시 재시도)";
+            tab.IsLoading = false;
+            if (ReferenceEquals(SelectedTab, tab))
+                UpdateStatus();
+            return;
+        }
 
         var progress = new Progress<IReadOnlyList<ExplorerEntry>>(batch =>
         {
@@ -680,8 +697,15 @@ public partial class ExplorerPane : UserControl
     {
         if (SelectedTab is { Path.Length: > 0 } tab)
         {
-            InvalidateTree([tab.Path]);
-            _ = NavigateAsync(tab, tab.Path, addHistory: false);
+            if (ExplorerLocations.IsThisPc(tab.Path))
+                _ = NavigateAsync(tab, tab.Path, addHistory: false);
+            else
+            {
+                // Refresh atomically via a snapshot; do not clear the visible
+                // list first if an SMB share disappears during enumeration.
+                tab.RefreshTreeAfterSnapshot = true;
+                RequestSnapshotRefresh(tab);
+            }
             _ = RefreshGitStatusAsync(force: true);
         }
     }
@@ -950,6 +974,7 @@ public partial class ExplorerPane : UserControl
         public string? WatchError { get; set; }
         public bool RefreshRunning { get; set; }
         public bool RefreshQueued { get; set; }
+        public bool RefreshTreeAfterSnapshot { get; set; }
         public bool IsDisposed { get; private set; }
 
         public ExplorerTab()

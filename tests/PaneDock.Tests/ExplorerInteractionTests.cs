@@ -1,4 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Collections.Specialized;
+using System.Windows;
 using PaneDock.App;
 using PaneDock.Core.Models;
 using PaneDock.Core.Services;
@@ -38,6 +40,15 @@ public sealed class ExplorerInteractionTests
                 [sourceFolder.FullName], sourceFolder.FullName));
             Assert.IsNotNull(FileDropCopyPolicy.GetRejectionReason(
                 [sourceFolder.FullName], child.FullName));
+            Assert.IsNotNull(FileDropCopyPolicy.GetRejectionReason(
+                [sourceFolder.FullName], child.FullName, verifyExists: false),
+                "DragOver must reject nesting without slow disk existence checks.");
+            Assert.IsNotNull(FileDropCopyPolicy.GetRejectionReason(
+                [sourceFolder.FullName], sourceFolder.FullName, verifyExists: false),
+                "A folder dropped onto itself must never show a Copy cursor.");
+            Assert.IsNull(FileDropCopyPolicy.GetRejectionReason(
+                [sourceFolder.FullName], sibling.FullName, verifyExists: false),
+                "Matching name prefixes without a directory boundary are allowed.");
             Assert.IsNotNull(FileDropCopyPolicy.GetRejectionReason(
                 [file], ExplorerLocations.ThisPc));
             Assert.IsNotNull(FileDropCopyPolicy.GetRejectionReason(
@@ -132,6 +143,41 @@ public sealed class ExplorerInteractionTests
         var outside = third with { FullPath = @"C:\Temp\other.txt" };
         CollectionAssert.AreEqual(new[] { outside.FullPath },
             FileDropCopyPolicy.GetDraggedPaths(atMouseDown, outside));
+    }
+
+    [TestMethod]
+    public void WpfFileDropPayloadRoundTripsMultipleFilesAndCopyPreference()
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var paths = new[] { @"C:\Temp\alpha.txt", @"C:\Temp\beta.log" };
+                var files = new StringCollection();
+                files.AddRange(paths);
+                var data = new DataObject();
+                data.SetFileDropList(files);
+                using var effect = new MemoryStream(BitConverter.GetBytes(1));
+                data.SetData("Preferred DropEffect", effect, autoConvert: false);
+
+                CollectionAssert.AreEqual(paths,
+                    data.GetData(DataFormats.FileDrop) as string[]);
+                Assert.IsTrue(data.GetDataPresent("Preferred DropEffect", autoConvert: false));
+                var preferred = data.GetData("Preferred DropEffect", autoConvert: false)
+                    as MemoryStream;
+                Assert.IsNotNull(preferred);
+                Assert.AreEqual(1, BitConverter.ToInt32(preferred.ToArray(), 0),
+                    "Internal drag payload must request Copy, never Move.");
+            }
+            catch (Exception ex) { error = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(10)),
+            "STA file drag payload validation timed out.");
+        if (error is not null)
+            throw new AssertFailedException("WPF FileDrop payload check failed.", error);
     }
 
     private static string CreateTestRoot()

@@ -23,6 +23,19 @@ public sealed class FileTransferSafetyTests
     }
 
     [TestMethod]
+    public void ShellFailureMessageKeepsActionableHResult()
+    {
+        var accessDenied = ShellFileOperation.DescribeShellFailure(unchecked((int)0x80070005));
+        StringAssert.Contains(accessDenied, "0x80070005");
+        Assert.IsTrue(accessDenied.Length > "0x80070005".Length,
+            "A failing Shell item should include an explanation and the original error code.");
+        var partialFailure = new ShellFileOperationResult(3, 2, 1, false, false, accessDenied);
+        Assert.IsFalse(partialFailure.Succeeded);
+        StringAssert.Contains(partialFailure.Describe(FileCommand.Copy), "1개 미완료");
+        StringAssert.Contains(partialFailure.Describe(FileCommand.Copy), "오류 발생");
+    }
+
+    [TestMethod]
     public void FileOperationSummaryDistinguishesSuccessPartialAndSkip()
     {
         var success = new ShellFileOperationResult(3, 3, 0, false, false);

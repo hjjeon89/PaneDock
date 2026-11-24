@@ -171,8 +171,11 @@ public partial class ExplorerPane
     {
         e.Handled = true;
         var valid = _activeTabDrag is { } source
-            && (target is null || !ReferenceEquals(source.Item, target))
-            && (e.AllowedEffects & DragDropEffects.Move) != 0;
+            && (e.AllowedEffects & DragDropEffects.Move) != 0
+            // Moving within the same pane requires another tab header.
+            // Dropping on the source tab or blank pane area does nothing.
+            && (!ReferenceEquals(source.Source, this)
+                || target is not null && !ReferenceEquals(source.Item, target));
         e.Effects = valid ? DragDropEffects.Move : DragDropEffects.None;
     }
 
@@ -330,7 +333,11 @@ public partial class ExplorerPane
         if (_fileOperationRunning || (e.AllowedEffects & DragDropEffects.Copy) == 0)
             return;
 
-        var failure = FileDropCopyPolicy.GetRejectionReason(sources, target);
+        // During Drop, avoid synchronous Directory.Exists/File.Exists against
+        // a possibly disconnected SMB share. The complete preflight below
+        // runs on a worker thread before any Shell operation is queued.
+        var failure = FileDropCopyPolicy.GetRejectionReason(sources, target,
+            verifyExists: false);
         if (failure is not null)
         {
             Status.Text = failure;

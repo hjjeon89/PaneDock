@@ -29,6 +29,7 @@ public partial class SearchPanel : UserControl
     };
     private CancellationTokenSource? _cancellation;
     private bool _indexReady;
+    private string _indexUnavailableMessage = "Everything 인덱스 연결 확인 중…";
     private bool _closing;
     private bool _active;
     private bool _deletionRunning;
@@ -80,30 +81,25 @@ public partial class SearchPanel : UserControl
         // Keep keyboard focus in the visible title-bar search field.
         StatusText.Text = "Everything 인덱스 연결 확인 중…";
         _indexReady = false;
-        if (_indexed.IsAvailable)
-        {
-            try
-            {
-                _indexReady = await _indexed.TrySearchAsync("PaneDock", null, true,
-                    1, CancellationToken.None) is not null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                       or ArgumentException)
-            {
-                _indexReady = false;
-            }
-        }
+        // Checking Everything's IPC and index state can wait on another
+        // process. Do not query it synchronously from Popup.Opened (UI thread)
+        // or run an unrelated warm-up filename query before the real search.
+        var availability = await Task.Run(() => _indexed.CheckAvailability());
+        _indexReady = availability == EverythingIndexedSearchService.Availability.Ready;
+        _indexUnavailableMessage =
+            EverythingIndexedSearchService.DescribeUnavailable(availability);
         if (_closing || !_active || activation != _activationGeneration) return;
         StatusText.Text = _indexReady
             ? "Everything 인덱스 연결됨 · 입력 후 약 230ms에 자동 검색"
-            : "Everything 연결 불가 · 검색 버튼으로 직접 검색하세요.";
+            : _indexUnavailableMessage + " · 느린 디스크 검색은 '직접 검색' 선택 후 실행하세요.";
         // Direct filesystem scans must remain explicitly user-initiated:
         // opening a popup must never silently traverse the whole C: drive.
         if (!string.IsNullOrWhiteSpace(QueryBox.Text)
             && _indexReady && DirectScanBox.IsChecked != true)
             await StartSearchAsync(automatic: true);
         else if (!string.IsNullOrWhiteSpace(QueryBox.Text))
-            StatusText.Text = "직접 파일 검색은 검색 버튼 또는 Enter로 시작하세요.";
+            StatusText.Text = _indexUnavailableMessage
+                + " · 직접 검색을 선택하면 수동 검색할 수 있습니다.";
     }
 
     public void Deactivate()
@@ -169,7 +165,9 @@ public partial class SearchPanel : UserControl
             _typingDelay.Start();
         }
         else
-            StatusText.Text = "직접 파일 검색은 검색 버튼 또는 Enter로 시작하세요.";
+            StatusText.Text = DirectScanBox.IsChecked == true
+                ? "직접 검색 준비 · Enter로 시작 (디스크 순회로 시간이 걸릴 수 있음)"
+                : _indexUnavailableMessage + " · 직접 검색을 선택하면 수동 검색할 수 있습니다.";
     }
 
     private async void Query_KeyDown(object sender, KeyEventArgs e)
@@ -193,8 +191,15 @@ public partial class SearchPanel : UserControl
 
         var searchAll = root.Length == 0 || string.Equals(root, "내 PC", StringComparison.OrdinalIgnoreCase)
             || ExplorerLocations.IsThisPc(root);
-        var usingIndex = _indexReady && DirectScanBox.IsChecked != true;
+        var directScan = DirectScanBox.IsChecked == true;
+        var usingIndex = _indexReady && !directScan;
         if (automatic && !usingIndex) return;
+        if (!usingIndex && !directScan)
+        {
+            StatusText.Text = _indexUnavailableMessage
+                + " · 직접 검색을 선택해야 디스크 검색을 시작합니다.";
+            return;
+        }
         _cancellation?.Cancel();
         var generation = ++_searchGeneration;
         var finished = false;
@@ -249,7 +254,11 @@ public partial class SearchPanel : UserControl
                     return;
                 }
                 if (usingIndex)
+                {
                     _indexReady = false;
+                    StatusText.Text = "Everything 응답 없음 · 직접 검색을 선택하면 파일 시스템을 수동 검색할 수 있습니다.";
+                    return;
+                }
                 var roots = searchAll ? FileSearchService.GetReadyDriveRoots() : [root];
                 report = await _service.SearchAsync(roots, query,
                     RecursiveBox.IsChecked == true, progress, cancel.Token);

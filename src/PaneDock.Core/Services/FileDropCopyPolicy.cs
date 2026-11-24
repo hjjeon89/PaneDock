@@ -67,12 +67,11 @@ public static class FileDropCopyPolicy
             if (verifyExists && !File.Exists(fullSource) && !Directory.Exists(fullSource))
                 return "복사할 파일 또는 폴더가 없어졌습니다.";
 
-            // The Shell will deal with duplicate names in the same parent folder,
-            // but a folder must never be copied into itself or its descendants.
-            // Files can have no extension, and directory names can contain dots.
-            // Do not guess the type from the name.
-            var sourceIsFolder = verifyExists && Directory.Exists(fullSource);
-            if (sourceIsFolder && IsInsideOrSame(fullDestination, fullSource))
+            // Compare path boundaries even during DragOver. A directory cannot
+            // exist beneath a file, so this is safe for both file and folder
+            // sources without a blocking Directory.Exists call on each mouse move.
+            // Shell still handles ordinary same-parent filename collisions.
+            if (IsInsideOrSame(fullDestination, fullSource))
                 return "폴더를 자기 자신이나 하위 폴더에 복사할 수 없습니다.";
         }
 

@@ -46,6 +46,10 @@ public partial class ExplorerPane
             if (!ReferenceEquals(tab.Watcher, watcher))
                 return;
             tab.WatchError = null;
+            // Re-read both the list and tree: SMB does not replay mutations
+            // that occurred while the share was disconnected.
+            tab.RefreshTreeAfterSnapshot = true;
+            RequestSnapshotRefresh(tab);
             if (ReferenceEquals(SelectedTab, tab))
                 UpdateStatus();
         });
@@ -98,8 +102,9 @@ public partial class ExplorerPane
 
                     var foldersChanged = ApplySnapshotDiff(tab, snapshot);
                     tab.Error = null;
-                    if (foldersChanged)
+                    if (foldersChanged || tab.RefreshTreeAfterSnapshot)
                         InvalidateTree([path]);
+                    tab.RefreshTreeAfterSnapshot = false;
                     if (ReferenceEquals(SelectedTab, tab))
                     {
                         UpdateStatus();

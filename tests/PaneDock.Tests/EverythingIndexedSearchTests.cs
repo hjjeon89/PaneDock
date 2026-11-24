@@ -65,4 +65,21 @@ public sealed class EverythingIndexedSearchTests
             directory.FullName, StringComparison.OrdinalIgnoreCase)),
             "Exact parent scope must never return entries from subfolders.");
     }
+
+    [TestMethod]
+    public void UnavailableEverythingStatesExplainWhyIndexedSearchCannotRun()
+    {
+        StringAssert.Contains(
+            EverythingIndexedSearchService.DescribeUnavailable(
+                EverythingIndexedSearchService.Availability.ServiceOnly),
+            "사용자 세션");
+        StringAssert.Contains(
+            EverythingIndexedSearchService.DescribeUnavailable(
+                EverythingIndexedSearchService.Availability.IpcUnavailable),
+            "IPC");
+        StringAssert.Contains(
+            EverythingIndexedSearchService.DescribeUnavailable(
+                EverythingIndexedSearchService.Availability.IndexNotLoaded),
+            "인덱스");
+    }
 }

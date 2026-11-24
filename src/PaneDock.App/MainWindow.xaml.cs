@@ -373,7 +373,19 @@ public partial class MainWindow : Window
     {
         if (SearchPanel.IsDeletionRunning) return;
         SearchPopup.IsOpen = false;
-        FolderBreakdownPopup.IsOpen = !FolderBreakdownPopup.IsOpen;
+        if (FolderBreakdownPopup.IsOpen)
+        {
+            FolderBreakdownPopup.IsOpen = false;
+            return;
+        }
+        // A StaysOpen=False popup opened during the button click may interpret
+        // that same mouse input as an outside click and close immediately.
+        // Open after the routed input has finished (as in the search popup).
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (!_closing && FolderSummaryButton.IsEnabled && !SearchPanel.IsDeletionRunning)
+                FolderBreakdownPopup.IsOpen = true;
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private void FolderSummaryRefresh_Click(object sender, RoutedEventArgs e) =>
@@ -792,6 +804,20 @@ public partial class MainWindow : Window
 
         if (_activePane is not null)
             SetActivePane(_activePane);
+        // Popups have separate focus scopes; WPF's default inactive-selection
+        // colors can make selected rows unreadable in Dark mode. Keep both
+        // search results and folder analysis in sync with the active theme.
+        foreach (var grid in new[] { FolderBreakdownGrid, SearchPanel.ResultGrid })
+        {
+            grid.Resources[SystemColors.HighlightBrushKey] =
+                (Brush)FindResource("SelectionBrush");
+            grid.Resources[SystemColors.InactiveSelectionHighlightBrushKey] =
+                (Brush)FindResource("InactiveSelectionBrush");
+            grid.Resources[SystemColors.HighlightTextBrushKey] =
+                (Brush)FindResource("TextPrimary");
+            grid.Resources[SystemColors.InactiveSelectionHighlightTextBrushKey] =
+                (Brush)FindResource("TextPrimary");
+        }
         ScheduleSessionSave();
     }
 }

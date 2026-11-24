@@ -172,7 +172,7 @@ public partial class ExplorerPane
                 if (!string.Equals(newPath,
                         command == FileCommand.Rename ? selected[0].FullPath : null,
                         StringComparison.OrdinalIgnoreCase)
-                    && (File.Exists(newPath) || Directory.Exists(newPath)))
+                    && await Task.Run(() => File.Exists(newPath) || Directory.Exists(newPath)))
                 {
                     MessageBox.Show(owner, "해당 이름의 파일이나 폴더가 이미 있습니다.\n\n"
                         + newPath, "이름 충돌", MessageBoxButton.OK, MessageBoxImage.Warning);

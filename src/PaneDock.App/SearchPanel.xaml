@@ -20,6 +20,7 @@
                     ToolTip="검색 팝업 닫기 (Esc)" Width="30" Height="27"
                     Padding="0" Click="CloseSearch_Click"/>
             <TextBlock Text="⌕  전체 파일 검색" FontSize="14" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimary}"
                        VerticalAlignment="Center"/>
         </DockPanel>
         <!-- The title-bar search box is the single search input. -->
@@ -57,9 +58,9 @@
                       Content="하위 폴더 포함" VerticalAlignment="Center" Margin="10,0,8,0"
                       Checked="SearchScope_Changed" Unchecked="SearchScope_Changed"/>
             <CheckBox Grid.Column="4" x:Name="DirectScanBox"
-                      Content="직접 검색" VerticalAlignment="Center" Margin="0,0,8,0"
+                      Content="직접 검색 (느림)" VerticalAlignment="Center" Margin="0,0,8,0"
                       Checked="SearchScope_Changed" Unchecked="SearchScope_Changed"
-                      ToolTip="Everything 인덱스에 포함되지 않은 폴더 또는 네트워크 경로를 실제로 순회하며 검색"/>
+                      ToolTip="선택 시에만 디스크를 직접 순회합니다. 전체 드라이브 검색은 오래 걸릴 수 있습니다."/>
             <Button Grid.Column="5" x:Name="CancelButton" Content="중지"
                     Click="Cancel_Click" IsEnabled="False" Padding="14,3"/>
         </Grid>
@@ -71,8 +72,42 @@
                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                   Background="{DynamicResource PanelBackground}"
                   Foreground="{DynamicResource TextPrimary}"
+                  RowBackground="{DynamicResource PanelBackground}"
+                  AlternatingRowBackground="{DynamicResource PanelBackground}"
                   GridLinesVisibility="None"
                   MouseDoubleClick="Results_DoubleClick">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="Background" Value="{DynamicResource PanelBackground}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.CellStyle>
+                <Style TargetType="DataGridCell">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.CellStyle>
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="{DynamicResource CardBackground}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                    <Setter Property="Padding" Value="8,5"/>
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="이름" Binding="{Binding Name}" Width="SizeToCells"
                                     MinWidth="170" MaxWidth="850"/>

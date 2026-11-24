@@ -146,8 +146,13 @@ internal static class ShellFileOperation
             var failed = Math.Min(requested - completed, sink.Failed);
             var canceled = cancellation.IsCancellationRequested || sink.WasCanceled
                 || operationError is not null && IsUserCancellation(operationError);
-            var error = operationError is null || IsUserCancellation(operationError)
-                ? null : operationError.Message;
+            // PerformOperations can return S_OK even when one queued item
+            // fails. Retain the first per-item/finish HRESULT so the UI can
+            // explain a permission or locked-file failure instead of only
+            // showing "items incomplete" in the status bar.
+            var error = operationError is not null && !IsUserCancellation(operationError)
+                ? operationError.Message
+                : sink.FirstErrorHResult is { } hr ? DescribeShellFailure(hr) : null;
             return new ShellFileOperationResult(requested, completed, failed,
                 aborted, canceled, error, Math.Min(requested - completed, sink.Skipped));
         }
@@ -179,6 +184,12 @@ internal static class ShellFileOperation
         || ex is COMException { HResult: unchecked((int)0x80004004) } // E_ABORT
         || ex is COMException { HResult: unchecked((int)0x80270000) } // COPYENGINE_E_USER_CANCELLED
         || ex is COMException { HResult: unchecked((int)0x80270001) }; // COPYENGINE_E_CANCELLED
+
+    internal static string DescribeShellFailure(int hr)
+    {
+        var detail = Marshal.GetExceptionForHR(hr)?.Message;
+        return $"{(string.IsNullOrWhiteSpace(detail) ? "Windows 파일 작업 실패" : detail)} (0x{unchecked((uint)hr):X8})";
+    }
 
     // IFileOperationProgressSink receives the HRESULT for each completed
     // item, unlike PerformOperations (which can return S_OK on cancellation).
@@ -221,6 +232,7 @@ internal static class ShellFileOperation
         internal int Failed { get; private set; }
         internal int Skipped { get; private set; }
         internal bool WasCanceled { get; private set; }
+        internal int? FirstErrorHResult { get; private set; }
 
         private int CheckCancellation()
         {
@@ -246,7 +258,10 @@ internal static class ShellFileOperation
                      or unchecked((int)0x80004004))
                 WasCanceled = true;
             else if (hr < 0)
+            {
                 Failed++;
+                FirstErrorHResult ??= hr;
+            }
             else
                 Skipped++;
             return 0; // Callbacks must not accidentally cancel pending work.
@@ -265,6 +280,8 @@ internal static class ShellFileOperation
         {
             if (result is Cancelled or CopyEngineUserCancelled or CopyEngineCancelled)
                 WasCanceled = true;
+            else if (result < 0)
+                FirstErrorHResult ??= result;
             return 0;
         }
         public int PreRenameItem(uint flags, nint item, string? name) => CheckCancellation();
