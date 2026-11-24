@@ -125,6 +125,27 @@ public partial class MainWindow : Window
         ApplyTheme(session?.IsDarkTheme == true);
         _panes = Enumerable.Range(1, 4)
             .Select(i => new ExplorerPane(i, session?.Panes.ElementAtOrDefault(i - 1))).ToArray();
+        // Clear stale candidates before a new click and on mouse release,
+        // including clicks outside the originating pane. Listen at the window
+        // so movement that leaves the tab header can still start the drag.
+        PreviewMouseDown += (_, e) =>
+        {
+            if (e.ChangedButton == MouseButton.Left)
+                foreach (var pane in _panes) pane.ClearPendingTabDrag();
+        };
+        PreviewMouseUp += (_, e) =>
+        {
+            if (e.ChangedButton == MouseButton.Left)
+                foreach (var pane in _panes) pane.ClearPendingTabDrag();
+        };
+        PreviewMouseMove += (_, e) =>
+        {
+            foreach (var pane in _panes)
+            {
+                pane.TryStartPendingTabDrag(e);
+                if (e.Handled) break;
+            }
+        };
         SearchPanel.NavigateRequested += path =>
         {
             var pane = _activePane ?? _panes[0];

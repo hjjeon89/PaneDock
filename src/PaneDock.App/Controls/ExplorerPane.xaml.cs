@@ -215,8 +215,6 @@ public partial class ExplorerPane : UserControl
         tabItem.PreviewDragOver += Tab_DragOver;
         tabItem.PreviewDrop += Tab_Drop;
         tabItem.PreviewMouseLeftButtonDown += Tab_DragStartMouseDown;
-        tabItem.PreviewMouseMove += Tab_DragStartMouseMove;
-        tabItem.PreviewMouseLeftButtonUp += Tab_DragStartMouseUp;
         var context = new ContextMenu();
         var duplicate = new MenuItem { Header = "탭 복제" };
         duplicate.Click += (_, _) =>
@@ -422,6 +420,9 @@ public partial class ExplorerPane : UserControl
             _filterTimer.Stop();
             Files.ItemsSource = tab.View;
             _displayedTab = tab;
+            // DataGrid can clear SortDescriptions when its ItemsSource is
+            // exchanged. The column arrow alone does not restore row order.
+            ApplyTabSort(tab);
             foreach (var item in tab.SelectedEntries)
             {
                 if (tab.View.Contains(item))
@@ -523,10 +524,15 @@ public partial class ExplorerPane : UserControl
 
     private static void ApplyTabSort(ExplorerTab tab)
     {
-        tab.View.SortDescriptions.Clear();
+        var sorts = tab.View.SortDescriptions;
+        var direction = tab.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        if (string.IsNullOrEmpty(tab.SortColumn) ? sorts.Count == 0
+            : sorts.Count == 1 && sorts[0].PropertyName == tab.SortColumn
+                && sorts[0].Direction == direction)
+            return;
+        sorts.Clear();
         if (!string.IsNullOrEmpty(tab.SortColumn))
-            tab.View.SortDescriptions.Add(new SortDescription(tab.SortColumn,
-                tab.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending));
+            sorts.Add(new SortDescription(tab.SortColumn, direction));
     }
 
     private void Files_Sorting(object sender, DataGridSortingEventArgs e)

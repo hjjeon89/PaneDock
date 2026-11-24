@@ -110,8 +110,7 @@ public partial class ExplorerPane
 
     private void Tab_DragStartMouseDown(object sender, MouseButtonEventArgs e)
     {
-        _tabDragStart = null;
-        _tabDragItem = null;
+        ClearPendingTabDrag();
         if (sender is not TabItem tabItem || e.ChangedButton != MouseButton.Left)
             return;
         // Clicking the tab's X button must close it, never start dragging.
@@ -122,20 +121,22 @@ public partial class ExplorerPane
         _tabDragItem = tabItem;
     }
 
-    private void Tab_DragStartMouseUp(object sender, MouseButtonEventArgs e)
+    internal void ClearPendingTabDrag()
     {
         _tabDragStart = null;
         _tabDragItem = null;
     }
 
-    private void Tab_DragStartMouseMove(object sender, MouseEventArgs e)
+    // MainWindow monitors preview movement across all panes. A fast vertical
+    // movement can leave the small tab header before the first MouseMove.
+    internal void TryStartPendingTabDrag(MouseEventArgs e)
     {
         if (_tabDragStart is not { } start || _tabDragItem is not { } item)
             return;
-        if (e.LeftButton != MouseButtonState.Pressed)
+        if (_disposed || !IsVisible || !Tabs.Items.Contains(item)
+            || e.LeftButton != MouseButtonState.Pressed)
         {
-            _tabDragStart = null;
-            _tabDragItem = null;
+            ClearPendingTabDrag();
             return;
         }
         var point = e.GetPosition(Tabs);
@@ -143,8 +144,7 @@ public partial class ExplorerPane
             && Math.Abs(point.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
             return;
 
-        _tabDragStart = null;
-        _tabDragItem = null;
+        ClearPendingTabDrag();
         var data = new DataObject();
         data.SetData(TabDragFormat, "PaneDockTab");
         _activeTabDrag = (this, item);
