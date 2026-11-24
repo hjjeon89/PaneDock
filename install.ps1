@@ -29,6 +29,8 @@ $logPath = $workDirectory + '.log'
 $transcribing = $false
 $locationPushed = $false
 $stage = 'Validate source and destination'
+$staging = $null
+$backupDirectory = $null
 try {
     if (-not $WhatIfPreference) {
         Start-Transcript -Path $logPath -Force | Out-Null
@@ -47,6 +49,27 @@ try {
         throw 'Close PaneDock before building, installing, or updating it.'
     }
     $InstallDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDirectory)
+    $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
+    if (-not $BuildOnly) {
+        . (Join-Path $PSScriptRoot 'install-files.ps1')
+        Assert-PaneDockInstallTarget $InstallDirectory
+        $programs = [Environment]::GetFolderPath('Programs')
+        $shortcutPath = Join-Path $programs 'PaneDock.lnk'
+        $removeShortcutPath = Join-Path $programs 'Uninstall PaneDock.lnk'
+        $shell = New-Object -ComObject WScript.Shell
+        if (Test-Path -LiteralPath $shortcutPath) {
+            $currentShortcut = $shell.CreateShortcut($shortcutPath)
+            if ($currentShortcut.TargetPath -ne (Join-Path $InstallDirectory 'PaneDock.exe')) {
+                throw 'A PaneDock Start menu shortcut already points to another installation. Uninstall that installation first.'
+            }
+        }
+        if (Test-Path -LiteralPath $removeShortcutPath) {
+            $currentShortcut = $shell.CreateShortcut($removeShortcutPath)
+            if ($currentShortcut.Arguments -ne (Get-PaneDockUninstallArguments $InstallDirectory)) {
+                throw 'An uninstall shortcut already points to another installation.'
+            }
+        }
+    }
     $action = if ($BuildOnly) {
         'Install a missing .NET 10 SDK if needed and publish PaneDock build files'
     }
@@ -121,24 +144,61 @@ try {
     }
 
     $stage = 'Copy build files to destination'
-    New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
-    Get-ChildItem -LiteralPath $publishDirectory -Force |
-        Copy-Item -Destination $InstallDirectory -Recurse -Force
-
     if ($BuildOnly) {
+        New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
+        Get-ChildItem -LiteralPath $publishDirectory -Force |
+            Copy-Item -Destination $InstallDirectory -Recurse -Force
         Write-Host "PaneDock build files: $InstallDirectory"
         Write-Host 'Run PaneDock.exe from this folder. Copy the entire folder when distributing the app.'
     }
     else {
+        # Prepare a complete installation on the destination volume before
+        # replacing the previous dedicated directory. Never delete arbitrary
+        # user files or overlay an incomplete publish on a working version.
+        $parent = Split-Path -Parent $InstallDirectory
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        $staging = Join-Path $parent ('.PaneDock-stage-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $staging | Out-Null
+        Get-ChildItem -LiteralPath $publishDirectory -Force |
+            Copy-Item -Destination $staging -Recurse -Force
+        foreach ($script in @('uninstall.ps1', 'install-files.ps1')) {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination $staging
+        }
+        Write-PaneDockManifest $staging
+        Assert-PaneDockInstallTarget $InstallDirectory
+        if (Test-Path -LiteralPath $InstallDirectory) {
+            $backupDirectory = Join-Path $parent ('.PaneDock-backup-' + [guid]::NewGuid().ToString('N'))
+            Move-Item -LiteralPath $InstallDirectory -Destination $backupDirectory
+        }
+        try {
+            Move-Item -LiteralPath $staging -Destination $InstallDirectory
+            $staging = $null
+        }
+        catch {
+            if ($backupDirectory -and -not (Test-Path -LiteralPath $InstallDirectory)) {
+                Move-Item -LiteralPath $backupDirectory -Destination $InstallDirectory
+                $backupDirectory = $null
+            }
+            throw
+        }
         $stage = 'Create Start menu shortcut'
-        $programs = [Environment]::GetFolderPath('Programs')
         New-Item -ItemType Directory -Path $programs -Force | Out-Null
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut((Join-Path $programs 'PaneDock.lnk'))
+        $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = Join-Path $InstallDirectory 'PaneDock.exe'
         $shortcut.WorkingDirectory = $InstallDirectory
         $shortcut.IconLocation = $shortcut.TargetPath + ',0'
         $shortcut.Save()
+        $removeShortcut = $shell.CreateShortcut($removeShortcutPath)
+        $removeShortcut.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $removeShortcut.Arguments = Get-PaneDockUninstallArguments $InstallDirectory
+        $removeShortcut.WorkingDirectory = $parent
+        $removeShortcut.IconLocation = $shortcut.TargetPath + ',0'
+        $removeShortcut.Save()
+        if ($backupDirectory) {
+            # This directory was verified to contain only managed files.
+            Remove-Item -LiteralPath $backupDirectory -Recurse -Force
+            $backupDirectory = $null
+        }
 
         Write-Host "PaneDock installed: $InstallDirectory"
         Write-Host 'Launch PaneDock from the Start menu.'
@@ -152,6 +212,12 @@ catch {
     throw
 }
 finally {
+    if ($staging -and (Test-Path -LiteralPath $staging)) {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($backupDirectory -and (Test-Path -LiteralPath $backupDirectory)) {
+        Write-Warning "Previous installation preserved at: $backupDirectory"
+    }
     try {
         if (Test-Path -LiteralPath $workDirectory) {
             $cleanupPath = (Resolve-Path -LiteralPath $workDirectory).ProviderPath

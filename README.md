@@ -18,7 +18,7 @@ Windows 11 스타일의 한 화면에서 1~4개 파일 탐색 패널을 자유�
 | Phase 5 · 폴더 분석 | **하단 요약 UI 구현** | 선택 폴더의 파일 수·하위 폴더·용량을 메인 화면 하단에 표시, 클릭 시 폴더별 상세 팝업 |
 | Phase 6 · 일괄 이름/확장자 변경 | 기본 구현 | 다중 파일 선택, 이름·확장자 규칙, 변경 미리보기, 충돌 차단, 적용/되돌리기 |
 | Phase 7 · 설정/테마 | 일부 구현 | 작업공간·Light/Dark 테마·레이아웃별 분할 비율 자동 저장/복원 구현 |
-| Phase 8 · 안정화/배포 | 진행 중 | Windows x64 빌드·설치 스크립트, 전용 아이콘, 10만 파일 최적화 및 P0 실기 검증 완료. 최신 Release 설치·제거/공개 라이선스 및 현장 성능 잔여 |
+| Phase 8 · 안정화/배포 | P1 진행 중 | Windows x64 Release 게시·설치/업데이트/제거 실기 완료, P0 및 10만 파일 최적화 완료. 공개 라이선스·현장 성능 및 장시간 회귀 검증 잔여 |
 
 ### 다음 작업 (우선순위)
 
@@ -28,7 +28,8 @@ Windows 11 스타일의 한 화면에서 1~4개 파일 탐색 패널을 자유�
 | P0 / 완료 | **QA-01 파일·탭 OLE 드래그** | 실제 Windows 마우스 입력으로 3개 파일 복사·원본/해시 보존, Shift 드래그 Copy-only, 탭 재정렬·패널 이동/필터·정렬 유지 확인 |
 | P0 / 로컬 SMB 검증 완료 | **QA-03 네트워크 드라이브 안정화** | 실제 로컬 SMB 매핑 해제·재매핑 및 UNC 경로 일시 접근 불가/복원 확인. 단절 중 경로·목록·선택 유지 및 F5, 복구 후 자동 갱신 확인. 외부 물리 서버·LAN 단절은 현장 검증 |
 | P1 | **대규모 폴더·Git 및 현장 네트워크 성능/회귀** | 로컬 10만 파일 최적화, 1만 추적 Git 파일 검증 완료. 외부 SMB 서버/물리 LAN 단절, 장시간 사용, 대형 worktree·디스크에서 추가 측정 |
-| P1 | **배포/공개 준비** | 최신 `build.cmd` 재게시 및 설치·제거 검증, Git/Everything 선택 의존성·공개 LICENSE 확인 |
+| P1 / REL-01 완료 | **배포 실기** | 최신 self-contained Release 게시, 실제 시작 메뉴 실행, 관리 파일 기반 업데이트·제거 및 사용자 데이터 보존 확인 |
+| P1 | **공개 준비** | Git/Everything 선택 의존성·공개 LICENSE 확인 |
 
 설계 문서, 진행 이력과 화면 자료는 로컬 Obsidian 보관소의
 `D:\_work\_brain\prj.PaneDock`에서 관리합니다.
@@ -278,13 +279,14 @@ PNG 프레임으로 `.ico` 파일에 함께 들어갑니다. 외부 이미지 �
 
 ## Release 빌드와 설치 (Windows x64)
 
-CANDesk와 동일한 구조의 **build / install** PowerShell 및 CMD 실행 파일을 제공합니다.
+**build / install / uninstall** PowerShell 및 CMD 실행 파일을 제공합니다.
 관리자 권한 없이 현재 사용자 계정에 배포할 수 있습니다.
 
 | 실행 파일 | 기능 | 결과 경로 |
 | --- | --- | --- |
 | `build.cmd` / `build.ps1` | .NET 10 SDK 확인 → win-x64 Release self-contained publish | `build\Release\PaneDock.exe` |
 | `install.cmd` / `install.ps1` | 빌드 → 프로그램 설치 → 시작 메뉴 바로가기 생성 | `%LOCALAPPDATA%\Programs\PaneDock\PaneDock.exe` |
+| `uninstall.cmd` / `uninstall.ps1` | 관리 파일과 해당 시작 메뉴 바로가기만 제거 | 사용자 설정 및 비관리 파일 보존 |
 
 아래 명령은 프로젝트 루트에서 실행합니다.
 
@@ -294,6 +296,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -InstallDirectory 'D:\Apps\PaneDock'
 powershell -ExecutionPolicy Bypass -File .\build.ps1 -WhatIf
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -WhatIf
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -WhatIf
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
 `build.cmd` 또는 `install.cmd`를 더블클릭하면 PowerShell을 실행하고 종료 전에
@@ -306,6 +310,13 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -WhatIf
   다른 Windows x64 PC에 복사하면 해당 PC에서 .NET SDK/런타임 설치 없이 실행할 수 있습니다.
 - 설치는 시작 메뉴에 **PaneDock** 바로가기를 생성합니다. 사용자 설정
   (`%APPDATA%\PaneDock`)은 초기화하지 않습니다.
+- 업데이트는 완전한 새 배포본을 준비한 뒤 기존 관리 설치 폴더를 교체합니다.
+  설치 관리 목록(`.panedock-install.json`)이 없는 기존 폴더나 사용자 파일이 혼재한
+  폴더는 안전을 위해 업데이트하지 않습니다. 별도 빈 폴더에 설치하거나 먼저
+  기존 설치 및 개인 파일을 정리하세요.
+- 시작 메뉴의 **Uninstall PaneDock** 바로가기, 설치 폴더의 `uninstall.ps1`,
+  또는 소스 저장소의 `uninstall.cmd`로 제거할 수 있습니다.
+  제거 시 관리 파일만 삭제하고 비관리 파일과 AppData 사용자 설정은 보존합니다.
 - SDK 및 NuGet/런타임 패키지가 로컬에 없으면 다운로드에 인터넷이 필요할 수 있습니다.
 - 작업 전에 실행 중인 PaneDock을 종료하세요. `-WhatIf`에서는 빌드/설치하지 않습니다.
 - 작업 기록은 `%TEMP%\PaneDock-install-<id>.log`에 저장됩니다.
