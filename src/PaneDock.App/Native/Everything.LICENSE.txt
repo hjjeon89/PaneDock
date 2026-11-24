@@ -2,6 +2,31 @@
 
 Everything
 
+Everything SDK source notice (Everything-SDK.zip, src/Everything.c):
+
+Copyright (C) 2022 David Carpenter
+
+Permission is hereby granted, free of charge,
+to any person obtaining a copy of this software
+and associated documentation files (the "Software"),
+to deal in the Software without restriction,
+including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
 Copyright (c) 2026 voidtools
 이 문서에 의해, 다음의 조건을 따르는 한 제한없이 소프트웨어를 다루기 위해 소프트웨어의 복사본과 관련된 문서("소프트웨어")를 획득하는 사람에게 변경의 자유가 허용된다. 제한 없음은 사용, 복제, 수정, 통합, 공포, 배포, 하위 라이선스 그리고/또는 소프트웨어의 복사본의 판매와 공급된 소프트웨어를 가진 사람에게 그렇게 할 수 있도록 허가하는 권한에 제한 없음을 포함한다.
 위의 저작권 표시와 이 허가 표시는 모든 소프트웨어의 복사본 또는 상당한 일부분에 포함되어야 한다.

@@ -1,0 +1,35 @@
+PaneDock third-party software notices
+
+The MIT license in LICENSE covers PaneDock's original source, not third-party
+components. Third-party components retain their own copyright and terms.
+
+Everything SDK
+--------------
+Everything64.dll: unmodified x64 IPC SDK binary, Copyright (C) 2022 David
+Carpenter (see Everything.LICENSE.txt for the SDK and existing voidtools/PCRE
+notices). Source archive: https://www.voidtools.com/Everything-SDK.zip
+SHA-256: 81B5BE18126ACD2C2B913F8F4A821E476B18393CDD3DEBD03387C50AFD8DB88F
+The Everything application, index/database, service and installer are not
+bundled. Users can obtain the application separately from voidtools.
+
+.NET / Windows Desktop runtime (self-contained Windows publish only)
+------------------------------------------------------------------
+Original license and notice files from the actual restored runtime packs are
+copied into licenses/<pack-id>/<version>/ during publish.
+The WPF source notice snapshot is WPF.THIRD-PARTY-NOTICES.txt (verified for
+Microsoft.WindowsDesktop.App.Runtime.win-x64 10.0.14, upstream dotnet/dotnet
+commit 0427b9abbead3fa64c6655eb4290c537397131fa). Recheck the WPF notice when
+updating runtime versions.
+
+Microsoft documents additional license terms for certain Windows native
+binaries. These are not relicensed under PaneDock's MIT license:
+https://github.com/dotnet/core/blob/main/license-information-windows.md
+https://dotnet.microsoft.com/en-us/dotnet_library_license.htm
+https://learn.microsoft.com/en-us/legal/windows-sdk/license
+For binary redistribution, comply with the applicable Microsoft terms,
+including distribution requirements; do not redistribute individual
+Microsoft components as standalone products.
+
+Git CLI is optional and independently installed; no Git executable is bundled.
+MSTest and other test-only NuGet packages are restored separately and are not
+included in the application publish.

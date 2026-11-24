@@ -8,6 +8,7 @@
     <AssemblyName>PaneDock</AssemblyName>
     <RootNamespace>PaneDock.App</RootNamespace>
     <ApplicationIcon>Assets\PaneDock.ico</ApplicationIcon>
+    <Copyright>Copyright (c) 2026 PaneDock contributors</Copyright>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\PaneDock.Core\PaneDock.Core.csproj" />
@@ -17,5 +18,34 @@
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
     <Content Include="Native\Everything.LICENSE.txt" Link="Everything.LICENSE.txt"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="..\..\LICENSE" Link="LICENSE"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="Native\WPF.THIRD-PARTY-NOTICES.txt" Link="WPF.THIRD-PARTY-NOTICES.txt"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
   </ItemGroup>
+  <Target Name="IncludeRuntimePackNotices" AfterTargets="ComputeFilesToPublish"
+          Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <_PaneDockRuntimePack Include="@(ResolvedRuntimePack)"
+          Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App' Or '%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.WindowsDesktop.App'" />
+      <_PaneDockRuntimeLicense Include="@(_PaneDockRuntimePack->'%(PackageDirectory)\LICENSE.TXT')"
+          Condition="Exists('%(_PaneDockRuntimePack.PackageDirectory)\LICENSE.TXT')" />
+      <_PaneDockRuntimeLicense Include="@(_PaneDockRuntimePack->'%(PackageDirectory)\LICENSE')"
+          Condition="Exists('%(_PaneDockRuntimePack.PackageDirectory)\LICENSE')" />
+      <_PaneDockRuntimeLicense Include="@(_PaneDockRuntimePack->'%(PackageDirectory)\THIRD-PARTY-NOTICES.TXT')"
+          Condition="Exists('%(_PaneDockRuntimePack.PackageDirectory)\THIRD-PARTY-NOTICES.TXT')" />
+      <ResolvedFileToPublish Include="@(_PaneDockRuntimeLicense)">
+        <RelativePath>licenses\%(_PaneDockRuntimeLicense.NuGetPackageId)\%(_PaneDockRuntimeLicense.NuGetPackageVersion)\%(_PaneDockRuntimeLicense.Filename)%(_PaneDockRuntimeLicense.Extension)</RelativePath>
+        <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+    <Error Condition="'@(_PaneDockRuntimePack)' == ''" Text="Self-contained runtime packs were not resolved." />
+    <Error Condition="!Exists('%(_PaneDockRuntimePack.PackageDirectory)\LICENSE.TXT') And !Exists('%(_PaneDockRuntimePack.PackageDirectory)\LICENSE')"
+           Text="License missing from %(_PaneDockRuntimePack.NuGetPackageId) %(_PaneDockRuntimePack.NuGetPackageVersion)." />
+    <Error Condition="'%(_PaneDockRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App' And !Exists('%(_PaneDockRuntimePack.PackageDirectory)\THIRD-PARTY-NOTICES.TXT')"
+           Text=".NET runtime third-party notices are missing." />
+    <Error Condition="'@(_PaneDockRuntimeLicense)' == ''" Text="Self-contained runtime license files were not resolved." />
+  </Target>
 </Project>
