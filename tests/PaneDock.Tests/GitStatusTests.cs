@@ -172,6 +172,58 @@ public sealed class GitStatusTests
         }
     }
 
+    [TestMethod]
+    public async Task LinkedWorktreeReportsOwnChangesAndSharesSnapshotAcrossPanes()
+    {
+        if (!CanRunGit())
+            return;
+
+        var root = Path.Combine(Path.GetTempPath(),
+            "PaneDock-worktree-" + Guid.NewGuid().ToString("N"));
+        var repository = Path.Combine(root, "repo");
+        var worktree = Path.Combine(root, "linked");
+        try
+        {
+            Directory.CreateDirectory(repository);
+            RunGit(repository, "init", "-q");
+            File.WriteAllText(Path.Combine(repository, "tracked.txt"), "base");
+            RunGit(repository, "add", ".");
+            Commit(repository, "base");
+            RunGit(repository, "worktree", "add", "--detach", worktree, "HEAD");
+            Assert.IsTrue(File.Exists(Path.Combine(worktree, ".git")));
+
+            var file = Path.Combine(worktree, "tracked.txt");
+            File.AppendAllText(file, "-edited");
+            var nested = Directory.CreateDirectory(Path.Combine(worktree, "nested"));
+            var untracked = Path.Combine(nested.FullName, "new.txt");
+            File.WriteAllText(untracked, "new");
+            var service = new GitStatusService();
+            var snapshots = await Task.WhenAll(Enumerable.Range(0, 4)
+                .Select(_ => new GitStatusService().GetSnapshotAsync(nested.FullName)));
+            var snapshot = snapshots[0];
+            Assert.IsNotNull(snapshot);
+            Assert.AreEqual(worktree, snapshot.Root);
+            Assert.AreEqual("(분리된 HEAD)", snapshot.Branch);
+            Assert.AreEqual(GitFileState.Modified, snapshot.GetStatus(file, false)?.State);
+            Assert.AreEqual(GitFileState.Untracked, snapshot.GetStatus(untracked, false)?.State);
+            Assert.IsTrue(snapshots.All(item => ReferenceEquals(snapshot, item)),
+                "Concurrent requests for one worktree should share a cached snapshot.");
+            var main = await service.GetSnapshotAsync(repository);
+            Assert.IsNotNull(main);
+            Assert.AreEqual(GitFileState.Clean,
+                main.GetStatus(Path.Combine(repository, "tracked.txt"), false)?.State);
+
+            RunGit(worktree, "add", "--", "tracked.txt");
+            var updated = await service.GetSnapshotAsync(worktree, force: true);
+            Assert.IsNotNull(updated);
+            Assert.AreEqual(GitFileState.Staged, updated.GetStatus(file, false)?.State);
+        }
+        finally
+        {
+            DeleteTestRepository(root);
+        }
+    }
+
     private static bool CanRunGit()
     {
         try
