@@ -20,6 +20,7 @@ public partial class ExplorerPane : UserControl
     private readonly DirectoryListingService _listing = new();
     private readonly List<ExplorerTab> _tabs = [];
     private readonly DispatcherTimer _filterTimer;
+    private readonly ExplorerNameNavigation _nameNavigation = new();
     private ExplorerTab? _displayedTab;
     private bool _disposed;
     private bool _changingTab;
@@ -64,6 +65,12 @@ public partial class ExplorerPane : UserControl
     public ExplorerPane(int number, PaneSession? saved = null)
     {
         InitializeComponent();
+        Files.IsKeyboardFocusWithinChanged += (_, _) =>
+        {
+            if (!Files.IsKeyboardFocusWithin)
+                _nameNavigation.Reset();
+        };
+        Files.PreviewMouseDown += (_, _) => _nameNavigation.Reset();
         Number = number;
         PaneTitle.Text = $"PANE {number}";
         _filterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -185,10 +192,10 @@ public partial class ExplorerPane : UserControl
             tab.FilterText = state.FilterText;
             tab.FilterVisible = state.FilterVisible;
             tab.ShowHidden = state.ShowHidden;
-            tab.SortColumn = state.SortColumn;
+            tab.SortColumn = state.SortColumn ?? nameof(ExplorerEntry.Name);
             tab.SortDescending = state.SortDescending;
-            ApplyTabSort(tab);
         }
+        ApplyTabSort(tab);
         _tabs.Add(tab);
         var label = new TextBlock { Text = $"탭 {++_tabCounter}", VerticalAlignment = VerticalAlignment.Center };
         var close = new Button
@@ -280,6 +287,8 @@ public partial class ExplorerPane : UserControl
     {
         if (_disposed || tab.IsDisposed)
             return;
+        if (ReferenceEquals(SelectedTab, tab))
+            _nameNavigation.Reset();
         tab.CancelCurrentLoad();
         var request = tab.Generation;
         var token = tab.Cancellation.Token;
@@ -412,6 +421,7 @@ public partial class ExplorerPane : UserControl
     {
         if (!ReferenceEquals(tab, _displayedTab))
         {
+            _nameNavigation.Reset();
             if (_displayedTab is not null)
             {
                 _displayedTab.SelectedEntries.Clear();
@@ -524,15 +534,7 @@ public partial class ExplorerPane : UserControl
 
     private static void ApplyTabSort(ExplorerTab tab)
     {
-        var sorts = tab.View.SortDescriptions;
-        var direction = tab.SortDescending ? ListSortDirection.Descending : ListSortDirection.Ascending;
-        if (string.IsNullOrEmpty(tab.SortColumn) ? sorts.Count == 0
-            : sorts.Count == 1 && sorts[0].PropertyName == tab.SortColumn
-                && sorts[0].Direction == direction)
-            return;
-        sorts.Clear();
-        if (!string.IsNullOrEmpty(tab.SortColumn))
-            sorts.Add(new SortDescription(tab.SortColumn, direction));
+        ExplorerItemSort.Apply(tab.View, tab.SortColumn, tab.SortDescending);
     }
 
     private void Files_Sorting(object sender, DataGridSortingEventArgs e)
@@ -794,6 +796,7 @@ public partial class ExplorerPane : UserControl
         // Escape is the one exception: it returns to the file list.
         if (key == Key.Escape && modifiers == ModifierKeys.None)
         {
+            _nameNavigation.Reset();
             if (Address.IsVisible)
             {
                 EndAddressEdit();
@@ -816,6 +819,17 @@ public partial class ExplorerPane : UserControl
             || (source is not null && FindParent<TextBoxBase>(source) is not null);
         var action = ExplorerKeyboardShortcuts.Resolve(key, modifiers,
             Files.IsKeyboardFocusWithin, editingText);
+        var nameKey = key == Key.ImeProcessed ? e.ImeProcessedKey : key;
+        if (action == ExplorerShortcutAction.None &&
+            ExplorerNameNavigation.TryGetLetter(nameKey, modifiers,
+                Files.IsKeyboardFocusWithin, editingText, out var letter))
+        {
+            _nameNavigation.SelectNext(Files, letter, Environment.TickCount64);
+            return true;
+        }
+        // Pressing Shift itself between characters must not break the prefix.
+        if (key is not (Key.LeftShift or Key.RightShift))
+            _nameNavigation.Reset();
         if (action == ExplorerShortcutAction.None)
             return false;
 
@@ -967,7 +981,7 @@ public partial class ExplorerPane : UserControl
         public string FilterText { get; set; } = "";
         public bool FilterVisible { get; set; }
         public bool ShowHidden { get; set; }
-        public string? SortColumn { get; set; }
+        public string SortColumn { get; set; } = nameof(ExplorerEntry.Name);
         public bool SortDescending { get; set; }
         public bool IsLoading { get; set; }
         public bool IsCheckingPath { get; set; }

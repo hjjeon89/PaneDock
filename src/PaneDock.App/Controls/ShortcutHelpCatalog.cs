@@ -23,6 +23,7 @@ internal static class ShortcutHelpCatalog
             new("Ctrl+L / Alt+D / F4", "주소 입력", ExplorerShortcutAction.EditAddress),
             new("Ctrl+F", "현재 폴더 필터", ExplorerShortcutAction.Filter),
             new("Ctrl+E / F3", "전체 파일 검색", ExplorerShortcutAction.GlobalSearch),
+            new("A–Z / Shift+A–Z", "파일 목록에서 이름 앞부분으로 선택 이동"),
             new("F6", "파일 목록·폴더 트리 포커스", ExplorerShortcutAction.FocusNextArea)
         ]),
         new("파일 · 폴더",

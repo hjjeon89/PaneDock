@@ -21,6 +21,10 @@
              Link="GitStatusBadgeConverter.cs" />
     <Compile Include="..\..\src\PaneDock.App\Controls\ExplorerKeyboardShortcuts.cs"
              Link="ExplorerKeyboardShortcuts.cs" />
+    <Compile Include="..\..\src\PaneDock.App\Controls\ExplorerItemSort.cs"
+             Link="ExplorerItemSort.cs" />
+    <Compile Include="..\..\src\PaneDock.App\Controls\ExplorerNameNavigation.cs"
+             Link="ExplorerNameNavigation.cs" />
     <Compile Include="..\..\src\PaneDock.App\Controls\ShortcutHelpCatalog.cs"
              Link="ShortcutHelpCatalog.cs" />
     <Using Include="System.IO" />

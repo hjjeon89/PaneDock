@@ -133,6 +133,7 @@
                           SelectedItemChanged="FolderTree_SelectedItemChanged">
                 </TreeView>
                 <DataGrid x:Name="Files" Grid.Column="1" Margin="5,0"
+                       InputMethod.IsInputMethodEnabled="False"
                        AllowDrop="True"
                        PreviewMouseLeftButtonDown="Files_DragSourceMouseDown"
                        PreviewMouseMove="Files_DragSourceMouseMove"
