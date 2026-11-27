@@ -12,47 +12,55 @@ if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
 }
 . (Join-Path $PSScriptRoot 'install-files.ps1')
 $root = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDirectory)).TrimEnd('\')
-if (-not (Test-Path -LiteralPath $root)) { Write-Host 'PaneDock is not installed there.'; return }
-if (Get-Process -Name PaneDock -ErrorAction SilentlyContinue) { throw 'Close PaneDock before uninstalling it.' }
-# Enumerate without following links before trusting the manifest.
-$present = @(Get-PaneDockInstallFiles $root)
-$managed = @(Read-PaneDockManifest $root)
-if (-not $PSCmdlet.ShouldProcess($root, 'Remove managed PaneDock files and matching Start menu shortcut (preserve settings and other files)')) { return }
+$maintenance = Enter-PaneDockMaintenance
+try {
+    if (-not (Test-Path -LiteralPath $root)) { Write-Host 'PaneDock is not installed there.'; return }
+    # Enumerate without following links before trusting the manifest.
+    $present = @(Get-PaneDockInstallFiles $root)
+    $managed = @(Read-PaneDockManifest $root)
+    if (-not $PSCmdlet.ShouldProcess($root, 'Remove managed PaneDock files, Start menu shortcuts, and the Windows app entry')) { return }
+    if (Get-Process -Name PaneDock -ErrorAction SilentlyContinue) { throw 'Close PaneDock before uninstalling it.' }
 
-# Keep the removal scripts available for retry if a managed binary is locked.
-$removalScripts = @('uninstall.ps1', 'uninstall.cmd', 'install-files.ps1')
-foreach ($relative in @($managed | Where-Object { $_ -notin $removalScripts })) {
-    if ($relative -in $present) {
-        Remove-Item -LiteralPath (Join-Path $root $relative) -Force
+    # Keep the removal scripts available for retry if a managed binary is locked.
+    $removalScripts = @('uninstall.ps1', 'uninstall.cmd', 'install-files.ps1')
+    foreach ($relative in @($managed | Where-Object { $_ -notin $removalScripts })) {
+        if ($relative -in $present) {
+            Remove-Item -LiteralPath (Join-Path $root $relative) -Force
+        }
     }
-}
-$shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'PaneDock.lnk'
-$removeShortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Uninstall PaneDock.lnk'
-if (Test-Path -LiteralPath $shortcutPath) {
-    $shell = New-Object -ComObject WScript.Shell
-    if ($shell.CreateShortcut($shortcutPath).TargetPath -eq (Join-Path $root 'PaneDock.exe')) {
-        Remove-Item -LiteralPath $shortcutPath -Force
+    $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'PaneDock.lnk'
+    $removeShortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Uninstall PaneDock.lnk'
+    if (Test-Path -LiteralPath $shortcutPath) {
+        $shell = New-Object -ComObject WScript.Shell
+        if (Test-PaneDockAppShortcut ($shell.CreateShortcut($shortcutPath)) $root) {
+            Remove-Item -LiteralPath $shortcutPath -Force
+        }
     }
-}
-if (Test-Path -LiteralPath $removeShortcutPath) {
-    $shell = New-Object -ComObject WScript.Shell
-    if ($shell.CreateShortcut($removeShortcutPath).Arguments -eq (Get-PaneDockUninstallArguments $root)) {
-        Remove-Item -LiteralPath $removeShortcutPath -Force
+    if (Test-Path -LiteralPath $removeShortcutPath) {
+        $shell = New-Object -ComObject WScript.Shell
+        if ($shell.CreateShortcut($removeShortcutPath).Arguments -eq (Get-PaneDockUninstallArguments $root)) {
+            Remove-Item -LiteralPath $removeShortcutPath -Force
+        }
     }
-}
-foreach ($relative in $removalScripts) {
-    if ($relative -in $present -and $relative -in $managed) {
-        Remove-Item -LiteralPath (Join-Path $root $relative) -Force
+    Unregister-PaneDockInstallation $root
+    foreach ($relative in $removalScripts) {
+        if ($relative -in $present -and $relative -in $managed) {
+            Remove-Item -LiteralPath (Join-Path $root $relative) -Force
+        }
     }
-}
-Remove-Item -LiteralPath (Join-Path $root $script:PaneDockManifestName) -Force
-# Remove only empty directories, leaving all untracked content alone.
-foreach ($directory in (Get-ChildItem -LiteralPath $root -Directory -Recurse -Force | Sort-Object { $_.FullName.Length } -Descending)) {
-    if (@(Get-ChildItem -LiteralPath $directory.FullName -Force).Count -eq 0) {
-        Remove-Item -LiteralPath $directory.FullName -Force
+    Remove-Item -LiteralPath (Join-Path $root $script:PaneDockManifestName) -Force
+    # Remove only empty directories, leaving all untracked content alone.
+    foreach ($directory in (Get-ChildItem -LiteralPath $root -Directory -Recurse -Force | Sort-Object { $_.FullName.Length } -Descending)) {
+        if (@(Get-ChildItem -LiteralPath $directory.FullName -Force).Count -eq 0) {
+            Remove-Item -LiteralPath $directory.FullName -Force
+        }
     }
+    if (@(Get-ChildItem -LiteralPath $root -Force).Count -eq 0) {
+        Remove-Item -LiteralPath $root -Force
+    }
+    Write-Host 'PaneDock uninstalled. User settings in AppData and unmanaged files were preserved.'
 }
-if (@(Get-ChildItem -LiteralPath $root -Force).Count -eq 0) {
-    Remove-Item -LiteralPath $root -Force
+finally {
+    $maintenance.ReleaseMutex()
+    $maintenance.Dispose()
 }
-Write-Host 'PaneDock uninstalled. User settings in AppData and unmanaged files were preserved.'

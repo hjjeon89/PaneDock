@@ -285,14 +285,43 @@ PNG 프레임으로 `.ico` 파일에 함께 들어갑니다. 외부 이미지 �
 
 ## Release 빌드와 설치 (Windows x64)
 
-**build / install / uninstall** PowerShell 및 CMD 실행 파일을 제공합니다.
+설치 프로그램과 소스 빌드·설치·제거용 PowerShell 및 CMD 파일을 제공합니다.
 관리자 권한 없이 현재 사용자 계정에 배포할 수 있습니다.
 
 | 실행 파일 | 기능 | 결과 경로 |
 | --- | --- | --- |
+| `installer\build-installer.cmd` | 배포용 콘솔 설치 프로그램 생성 | `build\Installer\PaneDock-Setup-V<버전>.exe` |
 | `build.cmd` / `build.ps1` | .NET 10 SDK 확인 → win-x64 Release self-contained publish | `build\Release\PaneDock.exe` |
-| `install.cmd` / `install.ps1` | 빌드 → 프로그램 설치 → 시작 메뉴 바로가기 생성 | `%LOCALAPPDATA%\Programs\PaneDock\PaneDock.exe` |
-| `uninstall.cmd` / `uninstall.ps1` | 관리 파일과 해당 시작 메뉴 바로가기만 제거 | 사용자 설정 및 비관리 파일 보존 |
+| `install.cmd` / `install.ps1` | 빌드 → 프로그램 설치 → Windows 앱 목록과 시작 메뉴에 등록 | `%LOCALAPPDATA%\Programs\PaneDock\PaneDock.exe` |
+| `uninstall.cmd` / `uninstall.ps1` | 관리 파일, 시작 메뉴 바로가기, Windows 앱 항목 제거 | 사용자 설정 및 비관리 파일 보존 |
+
+### 배포용 설치 파일
+
+새 버전을 배포할 때는 [PaneDock.App.csproj](src/PaneDock.App/PaneDock.App.csproj)의
+`<Version>` 값을 변경하세요. 빌드된 앱의 버전이 설치 파일 이름과 속성에 반영되며,
+앱 제목과 Windows 설치된 앱 목록에도 같은 버전이 표시됩니다.
+
+프로젝트 루트에서 설치 파일을 빌드하고 검증합니다.
+
+```powershell
+.\installer\build-installer.cmd --no-pause
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Installer.Tests.ps1
+```
+
+버전이 `1.0.0`이면 `build\Installer\PaneDock-Setup-V1.0.0.exe`가 생성됩니다.
+받는 PC에서는 이 파일 하나로 .NET SDK 설치나 NuGet 다운로드 없이 설치할 수 있습니다.
+
+- **Install**은 현재 사용자 계정에 새로 설치합니다. 기본 경로는 `%LOCALAPPDATA%\Programs\PaneDock`입니다.
+- **Modify**는 기존 설치를 업데이트하거나 복구합니다. 이전 스크립트로 설치한 경우에도
+  앱을 종료하고 **Modify**를 실행하면 Windows 앱 목록에 등록됩니다.
+- **Uninstall**은 설치 파일과 바로가기를 제거하고 사용자 설정 및 비관리 파일을 보존합니다.
+  Windows에 등록된 이후에는 **설정 → 앱 → 설치된 앱** 또는 **제어판 → 프로그램 및 기능**에서도 제거할 수 있습니다.
+
+콘솔에서 실행할 때는 `PaneDock-Setup-V1.0.0.exe install`, `PaneDock-Setup-V1.0.0.exe modify`,
+`PaneDock-Setup-V1.0.0.exe uninstall`로 메뉴를 바로 선택할 수 있습니다. 명령 뒤에
+`--what-if`를 붙이면 변경 내용을 미리 볼 수 있습니다.
+
+### 소스에서 빌드, 설치 또는 제거
 
 아래 명령은 프로젝트 루트에서 실행합니다.
 
@@ -332,8 +361,10 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 
 PaneDock 자체 소스는 [MIT License](LICENSE)로 공개합니다. 외부 구성 요소는
 각자의 라이선스를 따르며 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)에
-명시합니다. Everything SDK DLL만 포함하고 Everything 본체·서비스·인덱스는
-포함하지 않습니다. Everything이 없어도 파일 탐색과 기본 검색은 동작합니다.
+명시합니다. 배포본에는 Everything SDK의 `Everything64.dll`과 SDK의
+저작권 및 MIT 고지가 담긴 [Everything.LICENSE.txt](src/PaneDock.App/Native/Everything.LICENSE.txt)를
+함께 포함합니다. Everything 본체·서비스·인덱스는 포함하지 않습니다.
+Everything이 없어도 파일 탐색과 기본 검색은 동작합니다.
 Self-contained 배포 시 실제 .NET 런타임 팩의 라이선스/고지와 WPF 고지를
 포함합니다. Windows 런타임의 일부 바이너리에는 Microsoft의 별도 조건이
 적용되므로 배포자는 해당 조건을 준수해야 합니다.

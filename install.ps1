@@ -4,8 +4,9 @@
 Builds and installs PaneDock for the current Windows user.
 .DESCRIPTION
 Uses an existing .NET 10+ SDK, or installs a private .NET 10 SDK if missing.
-Publishes a self-contained Windows x64 build. The default installation creates
-a Start menu shortcut; -BuildOnly skips the shortcut and installs only files.
+Publishes a self-contained Windows x64 build or installs a prebuilt -Package.
+The default installation creates Start menu shortcuts and registers with Windows.
+-BuildOnly publishes files without registration or shortcuts.
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 .EXAMPLE
@@ -13,12 +14,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -InstallDirectory 'D:\App
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -WhatIf
 #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Source')]
 param(
     [Parameter()]
     [ValidateNotNullOrEmpty()]
     [string] $InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs\PaneDock'),
-    [switch] $BuildOnly
+    [Parameter(ParameterSetName = 'Source')]
+    [switch] $BuildOnly,
+    [Parameter(Mandatory, ParameterSetName = 'Package')]
+    [ValidateNotNullOrEmpty()]
+    [string] $Package
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +36,7 @@ $locationPushed = $false
 $stage = 'Validate source and destination'
 $staging = $null
 $backupDirectory = $null
+$maintenance = $null
 try {
     if (-not $WhatIfPreference) {
         Start-Transcript -Path $logPath -Force | Out-Null
@@ -40,26 +46,31 @@ try {
     if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem) {
         throw 'PaneDock requires 64-bit Windows.'
     }
-    $project = Join-Path $PSScriptRoot 'src\PaneDock.App\PaneDock.App.csproj'
-    if (-not (Test-Path -LiteralPath $project -PathType Leaf) -or
-        -not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'PaneDock.sln') -PathType Leaf)) {
-        throw 'Project source files are missing. Extract the entire repository; the PowerShell files alone cannot build PaneDock.'
-    }
-    if (Get-Process -Name 'PaneDock' -ErrorAction SilentlyContinue) {
-        throw 'Close PaneDock before building, installing, or updating it.'
+    if (-not $Package) {
+        $project = Join-Path $PSScriptRoot 'src\PaneDock.App\PaneDock.App.csproj'
+        if (-not (Test-Path -LiteralPath $project -PathType Leaf) -or
+            -not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'PaneDock.sln') -PathType Leaf)) {
+            throw 'Project source files are missing. Extract the entire repository; the PowerShell files alone cannot build PaneDock.'
+        }
     }
     $InstallDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDirectory)
     $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
     if (-not $BuildOnly) {
         . (Join-Path $PSScriptRoot 'install-files.ps1')
+        $maintenance = Enter-PaneDockMaintenance
         Assert-PaneDockInstallTarget $InstallDirectory
+        $registeredRoot = Get-PaneDockRegisteredRoot
+        if ($registeredRoot -and $registeredRoot -ne $InstallDirectory -and
+            (Test-Path -LiteralPath (Join-Path $registeredRoot $script:PaneDockManifestName) -PathType Leaf)) {
+            throw 'PaneDock is registered at another location. Uninstall that installation first.'
+        }
         $programs = [Environment]::GetFolderPath('Programs')
         $shortcutPath = Join-Path $programs 'PaneDock.lnk'
         $removeShortcutPath = Join-Path $programs 'Uninstall PaneDock.lnk'
         $shell = New-Object -ComObject WScript.Shell
         if (Test-Path -LiteralPath $shortcutPath) {
             $currentShortcut = $shell.CreateShortcut($shortcutPath)
-            if ($currentShortcut.TargetPath -ne (Join-Path $InstallDirectory 'PaneDock.exe')) {
+            if (-not (Test-PaneDockAppShortcut $currentShortcut $InstallDirectory)) {
                 throw 'A PaneDock Start menu shortcut already points to another installation. Uninstall that installation first.'
             }
         }
@@ -73,74 +84,92 @@ try {
     $action = if ($BuildOnly) {
         'Install a missing .NET 10 SDK if needed and publish PaneDock build files'
     }
+    elseif ($Package) {
+        'Install or update PaneDock from the setup package and register it with Windows'
+    }
     else {
-        'Install a missing .NET 10 SDK if needed, publish and install PaneDock, and create a Start menu shortcut'
+        'Publish and install PaneDock, create Start menu shortcuts, and register it with Windows'
     }
     if (-not $PSCmdlet.ShouldProcess($InstallDirectory, $action)) {
         return
     }
 
-    # Make SDK selection and NuGet configuration independent of the caller's folder.
-    Push-Location -LiteralPath $PSScriptRoot
-    $locationPushed = $true
-
-    $stage = 'Find a usable .NET 10+ SDK'
-    $sdkDirectory = Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet'
-    $sdkExecutable = Join-Path $sdkDirectory 'dotnet.exe'
-    $dotnet = $null
-    foreach ($candidate in @('dotnet', $sdkExecutable)) {
-        $command = Get-Command $candidate -ErrorAction SilentlyContinue
-        if (-not $command) { continue }
-        try {
-            $sdks = @(& $command --list-sdks 2>$null)
-            if ($LASTEXITCODE -eq 0 -and ($sdks -match '^(1[0-9]|[2-9][0-9]+)\.')) {
-                $dotnet = $command
-                break
-            }
-        }
-        catch { Write-Verbose "Ignoring unusable .NET host: $candidate. $_" }
+    if ((-not $BuildOnly -or (Test-Path -LiteralPath $InstallDirectory)) -and
+        (Get-Process -Name 'PaneDock' -ErrorAction SilentlyContinue)) {
+        throw 'Close PaneDock before building, installing, or updating it.'
     }
-    if (-not $dotnet) {
-        $stage = 'Download the .NET SDK installer'
-        Write-Host 'Installing .NET SDK 10 for the current user...'
-        New-Item -ItemType Directory -Path $workDirectory -Force | Out-Null
-        $sdkInstaller = Join-Path $workDirectory 'dotnet-install.ps1'
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        $installerUrls = @(
-            'https://dot.net/v1/dotnet-install.ps1',
-            'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.ps1'
-        )
-        foreach ($url in $installerUrls) {
+
+    if ($Package) {
+        $stage = 'Extract setup package'
+        $packagePath = (Resolve-Path -LiteralPath $Package).ProviderPath
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::ExtractToDirectory($packagePath, $publishDirectory)
+    }
+    else {
+        # Make SDK selection and NuGet configuration independent of the caller's folder.
+        Push-Location -LiteralPath $PSScriptRoot
+        $locationPushed = $true
+
+        $stage = 'Find a usable .NET 10+ SDK'
+        $sdkDirectory = Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet'
+        $sdkExecutable = Join-Path $sdkDirectory 'dotnet.exe'
+        $dotnet = $null
+        foreach ($candidate in @('dotnet', $sdkExecutable)) {
+            $command = Get-Command $candidate -ErrorAction SilentlyContinue
+            if (-not $command) { continue }
             try {
-                Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60 -OutFile $sdkInstaller
-                break
+                $sdks = @(& $command --list-sdks 2>$null)
+                if ($LASTEXITCODE -eq 0 -and ($sdks -match '^(1[0-9]|[2-9][0-9]+)\.')) {
+                    $dotnet = $command
+                    break
+                }
             }
-            catch {
-                if ($url -eq $installerUrls[-1]) { throw }
-                Write-Warning "Download failed from $url. Trying Microsoft's alternate endpoint. $_"
+            catch { Write-Verbose "Ignoring unusable .NET host: $candidate. $_" }
+        }
+        if (-not $dotnet) {
+            $stage = 'Download the .NET SDK installer'
+            Write-Host 'Installing .NET SDK 10 for the current user...'
+            New-Item -ItemType Directory -Path $workDirectory -Force | Out-Null
+            $sdkInstaller = Join-Path $workDirectory 'dotnet-install.ps1'
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            $installerUrls = @(
+                'https://dot.net/v1/dotnet-install.ps1',
+                'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.ps1'
+            )
+            foreach ($url in $installerUrls) {
+                try {
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60 -OutFile $sdkInstaller
+                    break
+                }
+                catch {
+                    if ($url -eq $installerUrls[-1]) { throw }
+                    Write-Warning "Download failed from $url. Trying Microsoft's alternate endpoint. $_"
+                }
+            }
+
+            $stage = 'Install .NET SDK 10'
+            # The official installer may call exit, so run it in a child process.
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $sdkInstaller -Channel 10.0 -Architecture x64 -InstallDir $sdkDirectory -NoPath
+            if ($LASTEXITCODE -ne 0) {
+                throw ".NET SDK installation failed (exit code $LASTEXITCODE)."
+            }
+            $dotnet = Get-Command $sdkExecutable -ErrorAction Stop
+            $sdks = @(& $dotnet --list-sdks)
+            if ($LASTEXITCODE -ne 0 -or -not ($sdks -match '^10\.')) {
+                throw '.NET SDK installation did not produce a usable .NET 10 SDK.'
             }
         }
 
-        $stage = 'Install .NET SDK 10'
-        # The official installer may call exit, so run it in a child process.
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $sdkInstaller -Channel 10.0 -Architecture x64 -InstallDir $sdkDirectory -NoPath
+        $stage = 'Restore NuGet packages and publish PaneDock'
+        & $dotnet publish $project --configuration Release --runtime win-x64 --self-contained true --output $publishDirectory
         if ($LASTEXITCODE -ne 0) {
-            throw ".NET SDK installation failed (exit code $LASTEXITCODE)."
-        }
-        $dotnet = Get-Command $sdkExecutable -ErrorAction Stop
-        $sdks = @(& $dotnet --list-sdks)
-        if ($LASTEXITCODE -ne 0 -or -not ($sdks -match '^10\.')) {
-            throw '.NET SDK installation did not produce a usable .NET 10 SDK.'
+            throw "PaneDock publish failed (exit code $LASTEXITCODE)."
         }
     }
-
-    $stage = 'Restore NuGet packages and publish PaneDock'
-    & $dotnet publish $project --configuration Release --runtime win-x64 --self-contained true --output $publishDirectory
-    if ($LASTEXITCODE -ne 0) {
-        throw "PaneDock publish failed (exit code $LASTEXITCODE)."
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory 'PaneDock.exe') -PathType Leaf)) {
-        throw 'Publish did not produce PaneDock.exe. Destination was not changed.'
+    foreach ($binary in @('PaneDock.exe', 'PaneDock.dll')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $binary) -PathType Leaf)) {
+            throw "PaneDock build is missing $binary. Destination was not changed."
+        }
     }
 
     $stage = 'Copy build files to destination'
@@ -194,6 +223,8 @@ try {
         $removeShortcut.WorkingDirectory = $parent
         $removeShortcut.IconLocation = $shortcut.TargetPath + ',0'
         $removeShortcut.Save()
+        $stage = 'Register with Windows'
+        Register-PaneDockInstallation $InstallDirectory
         if ($backupDirectory) {
             # This directory was verified to contain only managed files.
             Remove-Item -LiteralPath $backupDirectory -Recurse -Force
@@ -207,11 +238,17 @@ try {
 catch {
     Write-Host "Failed step: $stage" -ForegroundColor Red
     Write-Host $_.ToString() -ForegroundColor Red
-    Write-Host 'For download/restore errors, check Internet access, proxy settings, and trusted certificates for dot.net, aka.ms, builds.dotnet.microsoft.com and api.nuget.org.'
+    if (-not $Package) {
+        Write-Host 'For download/restore errors, check Internet access, proxy settings, and trusted certificates for dot.net, aka.ms, builds.dotnet.microsoft.com and api.nuget.org.'
+    }
     if ($transcribing) { Write-Host "Full log: $logPath" }
     throw
 }
 finally {
+    if ($maintenance) {
+        $maintenance.ReleaseMutex()
+        $maintenance.Dispose()
+    }
     if ($staging -and (Test-Path -LiteralPath $staging)) {
         Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     }

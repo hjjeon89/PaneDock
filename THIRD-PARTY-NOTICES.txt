@@ -6,8 +6,9 @@ components. Third-party components retain their own copyright and terms.
 Everything SDK
 --------------
 Everything64.dll: unmodified x64 IPC SDK binary, Copyright (C) 2022 David
-Carpenter (see Everything.LICENSE.txt for the SDK and existing voidtools/PCRE
-notices). Source archive: https://www.voidtools.com/Everything-SDK.zip
+Carpenter, distributed under the MIT License. Everything.LICENSE.txt contains
+its copyright and permission notice and the existing voidtools/PCRE notices.
+Source archive: https://www.voidtools.com/Everything-SDK.zip
 SHA-256: 81B5BE18126ACD2C2B913F8F4A821E476B18393CDD3DEBD03387C50AFD8DB88F
 The Everything application, index/database, service and installer are not
 bundled. Users can obtain the application separately from voidtools.

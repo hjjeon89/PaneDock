@@ -38,7 +38,8 @@
                 <Image Source="Assets/PaneDock.png" Width="27" Height="27"
                        Margin="0,0,9,0" Stretch="Uniform"
                        AutomationProperties.Name="PaneDock 프로그램 아이콘"/>
-                <TextBlock Text="PaneDock" FontSize="16" FontWeight="SemiBold"
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                           FontSize="16" FontWeight="SemiBold"
                            VerticalAlignment="Center" Margin="0,0,20,0"/>
                 <TextBox x:Name="GlobalSearchBox" Width="224" Height="28"
                           VerticalContentAlignment="Center" ToolTip="전체 검색 (Ctrl+E, F3) · Enter: 검색 · Esc: 닫기"
