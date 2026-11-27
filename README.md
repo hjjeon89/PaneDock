@@ -5,6 +5,8 @@
 Windows 11 스타일의 한 화면에서 1~4개 파일 탐색 패널을 자유롭게 배치하고,
 폴더 분석, 대량 이름·확장자 변경, 빠른 파일 검색을 통합하는 것을 목표로 합니다.
 
+**[PaneDock V1.0.0 다운로드 (Windows x64)](https://github.com/hjjeon89/PaneDock/releases/download/PaneDockV1.0.0/PaneDock-Setup-V1.0.0.exe)**
+
 <img src="src/PaneDock.App/Assets/PaneDock.png" width="96" alt="PaneDock 프로그램 아이콘" />
 
 ## 개발 진행 현황 (2026-11-24)
